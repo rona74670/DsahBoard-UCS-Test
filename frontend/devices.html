@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Device Registry | UCS Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    /* ── Page layout ────────────────────────────────────────────── */
+    .devices-wrap { margin: 1.5rem; }
+
+    /* ── Type badge colours ─────────────────────────────────────── */
+    .type-badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .type-UCS         { background:#0d1a2d; color:#58a6ff; border:1px solid #58a6ff; }
+    .type-InfiniBand  { background:#1a0d2d; color:#bc8cff; border:1px solid #bc8cff; }
+    .type-Host        { background:#0d2010; color:#3fb950; border:1px solid #3fb950; }
+    .type-Storage     { background:#2d1a0d; color:#f0883e; border:1px solid #f0883e; }
+    .type-Switch      { background:#2d2d0d; color:#e3b341; border:1px solid #e3b341; }
+    .type-Generic     { background:#1a1a1a; color:#8b949e; border:1px solid #8b949e; }
+
+    /* ── Modal ──────────────────────────────────────────────────── */
+    .modal-backdrop {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: #161b22;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 2rem;
+      width: 520px;
+      max-width: 95vw;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .modal h2 { color: var(--accent); margin: 0 0 1.4rem; font-size: 1.1rem; }
+    .form-row { margin-bottom: 1rem; }
+    .form-row label { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 0.3rem; }
+    .form-row input, .form-row select, .form-row textarea {
+      width: 100%; box-sizing: border-box;
+      background: #0d1117; border: 1px solid var(--border);
+      color: var(--text); border-radius: 5px;
+      padding: 0.4rem 0.6rem; font-size: 0.84rem;
+    }
+    .form-row input:focus, .form-row select:focus, .form-row textarea:focus {
+      outline: none; border-color: var(--accent);
+    }
+    .form-row textarea { resize: vertical; min-height: 60px; }
+    .form-row.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .modal-actions { display: flex; gap: 0.7rem; justify-content: flex-end; margin-top: 1.5rem; }
+    .btn { padding: 0.4rem 1.1rem; border-radius: 5px; border: none; cursor: pointer;
+           font-size: 0.84rem; font-weight: 600; transition: opacity 0.15s; }
+    .btn:hover { opacity: 0.85; }
+    .btn-primary  { background: var(--accent); color: #000; }
+    .btn-danger   { background: #da3633; color: #fff; }
+    .btn-secondary{ background: #30363d; color: var(--text); }
+
+    /* ── Add button in card header ──────────────────────────────── */
+    .add-device-btn {
+      background: var(--accent); color: #000;
+      border: none; border-radius: 5px;
+      padding: 0.3rem 0.9rem; font-size: 0.82rem; font-weight: 700;
+      cursor: pointer; margin-right: 1rem; transition: opacity 0.15s;
+    }
+    .add-device-btn:hover { opacity: 0.85; }
+
+    .enabled-dot {
+      display: inline-block;
+      width: 8px; height: 8px; border-radius: 50%;
+      margin-left: 4px;
+    }
+    .enabled-dot.on  { background: #3fb950; }
+    .enabled-dot.off { background: #da3633; }
+
+    .action-btn {
+      background: transparent; border: 1px solid #30363d;
+      color: var(--muted); border-radius: 4px;
+      padding: 0.15rem 0.55rem; font-size: 0.72rem;
+      cursor: pointer; transition: border-color 0.15s, color 0.15s;
+      margin: 0 2px;
+    }
+    .action-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .action-btn.del:hover { border-color: #da3633; color: #da3633; }
+
+    .empty-msg { text-align: center; color: var(--muted); padding: 2rem; font-style: italic; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <span class="logo">&#x2609; UCS Dashboard</span>
+      <nav class="farm-nav">
+        <a href="/"        class="farm-link">TC-FARM</a>
+        <a href="/pt"      class="farm-link">PT-FARM</a>
+        <a href="/fattal"  class="farm-link">FATTAL</a>
+        <a href="/compare" class="farm-link">&#x1F4CA; Compare</a>
+        <a href="/devices" class="farm-link active">&#x1F5C4; Devices</a>
+      </nav>
+      <div class="header-meta">
+        <button id="refresh-btn" onclick="loadDevices()">&#x21BB; Refresh</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="devices-wrap">
+    <!-- Summary KPIs -->
+    <section class="kpi-grid" id="kpi-grid" style="margin-bottom:1.5rem">
+      <div class="kpi-card"><div class="kpi-label">Total Devices</div><div class="kpi-value" id="kpi-total">–</div></div>
+      <div class="kpi-card"><div class="kpi-label">UCS</div><div class="kpi-value" id="kpi-ucs">–</div></div>
+      <div class="kpi-card"><div class="kpi-label">InfiniBand</div><div class="kpi-value" id="kpi-ib">–</div></div>
+      <div class="kpi-card"><div class="kpi-label">Hosts</div><div class="kpi-value" id="kpi-hosts">–</div></div>
+      <div class="kpi-card"><div class="kpi-label">Storage</div><div class="kpi-value" id="kpi-storage">–</div></div>
+      <div class="kpi-card"><div class="kpi-label">Enabled</div><div class="kpi-value" id="kpi-enabled">–</div></div>
+    </section>
+
+    <!-- Device table card -->
+    <section class="card" id="devices-card">
+      <div class="card-toggle" style="cursor:default">
+        <span class="card-title">&#x1F5C4; Device Registry</span>
+        <div style="display:flex;align-items:center;gap:0.5rem">
+          <input type="text" id="dev-filter" class="filter-input"
+            placeholder="&#x1F50D; חפש: שם, IP, סוג, farm..." style="width:220px"
+            oninput="renderTable()" />
+          <button class="add-device-btn" onclick="openModal()">+ הוסף התקן</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="table-wrap">
+          <table id="dev-table">
+            <thead><tr>
+              <th>שם</th><th>סוג</th><th>Farm</th><th>Host / IP</th>
+              <th>Port</th><th>Protocol</th><th>הערות</th><th>Status</th><th>פעולות</th>
+            </tr></thead>
+            <tbody id="dev-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ── Add / Edit modal ──────────────────────────────────────────── -->
+  <div class="modal-backdrop" id="modal-backdrop">
+    <div class="modal">
+      <h2 id="modal-title">הוסף התקן</h2>
+      <input type="hidden" id="edit-id" value="" />
+
+      <div class="form-row two-col">
+        <div>
+          <label>שם התקן *</label>
+          <input type="text" id="f-name" placeholder="TC-IB-Switch-01" />
+        </div>
+        <div>
+          <label>סוג *</label>
+          <select id="f-type">
+            <option>UCS</option>
+            <option>InfiniBand</option>
+            <option>Host</option>
+            <option>Storage</option>
+            <option>Switch</option>
+            <option>Generic</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row two-col">
+        <div>
+          <label>Farm</label>
+          <select id="f-farm">
+            <option>TC-FARM</option>
+            <option>PT-FARM</option>
+            <option>FATTAL</option>
+            <option>ALL</option>
+          </select>
+        </div>
+        <div>
+          <label>Enabled</label>
+          <select id="f-enabled">
+            <option value="1">כן</option>
+            <option value="0">לא</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row two-col">
+        <div>
+          <label>Host / IP</label>
+          <input type="text" id="f-host" placeholder="10.10.x.x" />
+        </div>
+        <div>
+          <label>Port</label>
+          <input type="number" id="f-port" placeholder="443" value="443" />
+        </div>
+      </div>
+
+      <div class="form-row two-col">
+        <div>
+          <label>Protocol</label>
+          <select id="f-protocol">
+            <option>https</option>
+            <option>http</option>
+            <option>ssh</option>
+            <option>snmp</option>
+            <option>other</option>
+          </select>
+        </div>
+        <div>
+          <label>Username</label>
+          <input type="text" id="f-user" placeholder="admin" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label>Password</label>
+        <input type="password" id="f-pass" placeholder="••••••••" />
+      </div>
+
+      <div class="form-row">
+        <label>הערות</label>
+        <textarea id="f-notes" placeholder="מיקום, תיאור, גרסה..."></textarea>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeModal()">ביטול</button>
+        <button class="btn btn-danger" id="del-btn" onclick="deleteDevice()" style="display:none">מחק</button>
+        <button class="btn btn-primary" onclick="saveDevice()">שמור</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>UCS Dashboard &copy; 2026 | Device Registry</footer>
+
+  <script>
+  let allDevices = [];
+
+  const TYPE_LABELS = ['UCS','InfiniBand','Host','Storage','Switch','Generic'];
+
+  async function loadDevices() {
+    try {
+      const res = await fetch('/api/devices');
+      allDevices = await res.json();
+      updateKpis();
+      renderTable();
+    } catch(e) {
+      console.error('Failed to load devices:', e);
+    }
+  }
+
+  function updateKpis() {
+    const byType = t => allDevices.filter(d => d.type === t).length;
+    document.getElementById('kpi-total').textContent   = allDevices.length;
+    document.getElementById('kpi-ucs').textContent     = byType('UCS');
+    document.getElementById('kpi-ib').textContent      = byType('InfiniBand');
+    document.getElementById('kpi-hosts').textContent   = byType('Host');
+    document.getElementById('kpi-storage').textContent = byType('Storage');
+    document.getElementById('kpi-enabled').textContent = allDevices.filter(d => d.enabled).length;
+  }
+
+  function esc(s) {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function renderTable() {
+    const q = document.getElementById('dev-filter').value.toLowerCase().trim();
+    const filtered = q
+      ? allDevices.filter(d =>
+          [d.name, d.type, d.farm, d.host, d.notes].some(v =>
+            String(v ?? '').toLowerCase().includes(q)))
+      : allDevices;
+
+    const tbody = document.getElementById('dev-tbody');
+    if (!filtered.length) {
+      tbody.innerHTML = `<tr><td colspan="9" class="empty-msg">אין התקנים תואמים</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = filtered.map(d => `
+      <tr>
+        <td style="font-weight:600;color:var(--accent)">${esc(d.name)}</td>
+        <td><span class="type-badge type-${esc(d.type)}">${esc(d.type)}</span></td>
+        <td>${esc(d.farm)}</td>
+        <td>${esc(d.host)}</td>
+        <td>${esc(d.port)}</td>
+        <td>${esc(d.protocol)}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(d.notes)}">${esc(d.notes)}</td>
+        <td><span class="enabled-dot ${d.enabled ? 'on' : 'off'}"></span> ${d.enabled ? 'פעיל' : 'כבוי'}</td>
+        <td>
+          <button class="action-btn" onclick="openModal(${d.id})">&#x270F; ערוך</button>
+          <button class="action-btn del" onclick="confirmDelete(${d.id})">&#x1F5D1;</button>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  function openModal(id) {
+    const modal = document.getElementById('modal-backdrop');
+    const delBtn = document.getElementById('del-btn');
+    document.getElementById('modal-title').textContent = id ? 'ערוך התקן' : 'הוסף התקן';
+    delBtn.style.display = id ? '' : 'none';
+
+    if (id) {
+      const d = allDevices.find(x => x.id === id);
+      if (!d) return;
+      document.getElementById('edit-id').value   = id;
+      document.getElementById('f-name').value     = d.name     ?? '';
+      document.getElementById('f-type').value     = d.type     ?? 'Generic';
+      document.getElementById('f-farm').value     = d.farm     ?? 'ALL';
+      document.getElementById('f-host').value     = d.host     ?? '';
+      document.getElementById('f-port').value     = d.port     ?? 443;
+      document.getElementById('f-protocol').value = d.protocol ?? 'https';
+      document.getElementById('f-user').value     = d.username ?? '';
+      document.getElementById('f-pass').value     = '';
+      document.getElementById('f-notes').value    = d.notes    ?? '';
+      document.getElementById('f-enabled').value  = d.enabled ? '1' : '0';
+    } else {
+      document.getElementById('edit-id').value = '';
+      ['f-name','f-host','f-user','f-pass','f-notes'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('f-port').value     = '443';
+      document.getElementById('f-type').value     = 'Generic';
+      document.getElementById('f-farm').value     = 'ALL';
+      document.getElementById('f-protocol').value = 'https';
+      document.getElementById('f-enabled').value  = '1';
+    }
+    modal.classList.add('open');
+  }
+
+  function closeModal() {
+    document.getElementById('modal-backdrop').classList.remove('open');
+  }
+
+  async function saveDevice() {
+    const id   = document.getElementById('edit-id').value;
+    const body = {
+      farm:     document.getElementById('f-farm').value,
+      name:     document.getElementById('f-name').value.trim(),
+      type:     document.getElementById('f-type').value,
+      host:     document.getElementById('f-host').value.trim(),
+      username: document.getElementById('f-user').value.trim(),
+      password: document.getElementById('f-pass').value,
+      port:     parseInt(document.getElementById('f-port').value) || 443,
+      protocol: document.getElementById('f-protocol').value,
+      notes:    document.getElementById('f-notes').value.trim(),
+      enabled:  document.getElementById('f-enabled').value === '1',
+    };
+    if (!body.name) { alert('שם התקן הוא שדה חובה'); return; }
+
+    const url    = id ? `/api/devices/${id}` : '/api/devices';
+    const method = id ? 'PUT' : 'POST';
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) { const e = await res.json(); alert(e.detail || 'שגיאה בשמירה'); return; }
+      closeModal();
+      loadDevices();
+    } catch(e) {
+      alert('שגיאת רשת: ' + e.message);
+    }
+  }
+
+  async function confirmDelete(id) {
+    if (!confirm('למחוק את ההתקן?')) return;
+    await fetch(`/api/devices/${id}`, { method: 'DELETE' });
+    loadDevices();
+  }
+
+  async function deleteDevice() {
+    const id = document.getElementById('edit-id').value;
+    if (!id) return;
+    if (!confirm('למחוק את ההתקן?')) return;
+    await fetch(`/api/devices/${id}`, { method: 'DELETE' });
+    closeModal();
+    loadDevices();
+  }
+
+  // Close modal on backdrop click
+  document.getElementById('modal-backdrop').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal();
+  });
+
+  window.addEventListener('DOMContentLoaded', loadDevices);
+  </script>
+</body>
+</html>

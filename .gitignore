@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment / secrets
+backend/.env
+.env
+
+# SQLite DB (contains passwords + personal data)
+backend/dashboard.db
+backend/*.db
+
+# JSON manual data backups
+backend/manual_data*.json
+backend/manual_data*.bak
+backend/manual_data*.migrated.bak
+
+# Logs
+logs/
+*.log
+
+# NSSM binary (downloaded at install time)
+tools/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Temp
+*.tmp
+*.bak

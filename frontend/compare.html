@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Farm Comparison | UCS Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 200px repeat(3, 1fr);
+      gap: 0;
+      margin: 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .cmp-cell {
+      padding: 0.55rem 0.9rem;
+      border-bottom: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      font-size: 0.84rem;
+      color: var(--text);
+    }
+    .cmp-cell:last-child { border-right: none; }
+    .cmp-cell.label {
+      color: var(--muted);
+      font-weight: 600;
+      background: #0d1117;
+    }
+    .cmp-cell.farm-header {
+      font-weight: 700;
+      font-size: 0.95rem;
+      text-align: center;
+      background: linear-gradient(135deg, #182540, #0d1117);
+      color: var(--accent);
+      padding: 0.75rem;
+    }
+    .cmp-cell.farm-header.tc  { color: #58a6ff; }
+    .cmp-cell.farm-header.pt  { color: #3fb950; }
+    .cmp-cell.farm-header.fat { color: #f78166; }
+    .cmp-cell.section-sep {
+      grid-column: 1 / -1;
+      background: #161b22;
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      padding: 0.4rem 0.9rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .cmp-cell.best { color: #3fb950; font-weight: 700; }
+    .cmp-cell.loading { color: var(--muted); font-style: italic; }
+    .cmp-cell.error  { color: var(--critical); }
+    .cmp-host { font-size: 0.72rem; color: var(--muted); font-weight: 400; display: block; }
+    .page-title { text-align: center; padding: 1.5rem 0 0.5rem; font-size: 1.5rem; font-weight: 700; color: var(--accent); }
+    .page-sub   { text-align: center; color: var(--muted); font-size: 0.85rem; margin-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <span class="logo">&#x2609; UCS Dashboard</span>
+      <nav class="farm-nav">
+        <a href="/"        class="farm-link">TC-FARM</a>
+        <a href="/pt"      class="farm-link">PT-FARM</a>
+        <a href="/fattal"  class="farm-link">FATTAL</a>
+        <a href="/compare" class="farm-link active">&#x1F4CA; Compare</a>
+        <a href="/devices" class="farm-link">&#x1F5C4; Devices</a>
+      </nav>
+      <div class="header-meta">
+        <button id="refresh-btn" onclick="loadCompare()">&#x21BB; Refresh</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="page-title">&#x1F4CA; Farm Comparison</div>
+  <div class="page-sub">Side-by-side overview of all UCS environments</div>
+
+  <div id="compare-grid" class="compare-grid">
+    <div class="cmp-cell label"></div>
+    <div class="cmp-cell farm-header tc">TC-FARM<span class="cmp-host">10.10.140.100</span></div>
+    <div class="cmp-cell farm-header pt">PT-FARM<span class="cmp-host">10.20.140.100</span></div>
+    <div class="cmp-cell farm-header fat">FATTAL<span class="cmp-host">10.8.0.160</span></div>
+    <div class="cmp-cell section-sep">Loading…</div>
+  </div>
+
+  <footer>UCS Dashboard &copy; 2026 | Farm Comparison</footer>
+
+  <script>
+  const FARMS = [
+    { name: 'TC-FARM', prefix: '/api/tc',     host: '10.10.140.100', cls: 'tc'  },
+    { name: 'PT-FARM', prefix: '/api/pt',     host: '10.20.140.100', cls: 'pt'  },
+    { name: 'FATTAL',  prefix: '/api/fattal', host: '10.8.0.160',    cls: 'fat' },
+  ];
+
+  function fmt(v) {
+    if (v === null || v === undefined) return '–';
+    return String(v);
+  }
+
+  function bestIdx(vals, higher = true) {
+    const nums = vals.map(v => parseFloat(String(v).replace(/[^0-9.]/g, '')) || 0);
+    let best = -1, bestVal = higher ? -Infinity : Infinity;
+    nums.forEach((n, i) => {
+      if ((higher && n > bestVal) || (!higher && n < bestVal && n > 0)) { bestVal = n; best = i; }
+    });
+    return best;
+  }
+
+  function buildGrid(summaries) {
+    const grid = document.getElementById('compare-grid');
+
+    const rows = [
+      // [label, fn(s), higherIsBetter]
+      ['__sep__', 'Inventory', null],
+      ['Fabric Interconnects', s => s.counts?.fabric_interconnects ?? '–', true],
+      ['Chassis',              s => s.counts?.chassis             ?? '–', true],
+      ['Blade Servers',        s => s.counts?.blade_servers       ?? '–', true],
+      ['Rack Servers',         s => s.counts?.rack_servers        ?? '–', true],
+      ['Service Profiles',     s => s.counts?.service_profiles    ?? '–', true],
+      ['Total Servers',        s => s.counts?.total_servers       ?? '–', true],
+
+      ['__sep__', 'Faults', null],
+      ['Critical Faults',      s => s.fault_summary?.critical ?? 0, false],
+      ['Major Faults',         s => s.fault_summary?.major    ?? 0, false],
+      ['Minor Faults',         s => s.fault_summary?.minor    ?? 0, false],
+      ['Warning Faults',       s => s.fault_summary?.warning  ?? 0, false],
+
+      ['__sep__', 'System', null],
+      ['Domain Name',          s => s.system?.name ?? '–', null],
+      ['Mode',                 s => s.system?.mode ?? '–', null],
+      ['Uptime',               s => s.system?.systemUpTime ?? '–', null],
+      ['Mgmt IP',              s => s.system?.address ?? '–', null],
+    ];
+
+    let html = `
+      <div class="cmp-cell label"></div>
+      <div class="cmp-cell farm-header tc">TC-FARM<span class="cmp-host">10.10.140.100</span></div>
+      <div class="cmp-cell farm-header pt">PT-FARM<span class="cmp-host">10.20.140.100</span></div>
+      <div class="cmp-cell farm-header fat">FATTAL<span class="cmp-host">10.8.0.160</span></div>
+    `;
+
+    rows.forEach(([label, fn, higher]) => {
+      if (label === '__sep__') {
+        html += `<div class="cmp-cell section-sep">${fn}</div>`;
+        return;
+      }
+      const vals = summaries.map(s => s ? fn(s) : '–');
+      const best = higher !== null ? bestIdx(vals, higher) : -1;
+      html += `<div class="cmp-cell label">${label}</div>`;
+      vals.forEach((v, i) => {
+        const isBest = best === i && higher !== null;
+        html += `<div class="cmp-cell${isBest ? ' best' : ''}">${v}</div>`;
+      });
+    });
+
+    grid.innerHTML = html;
+  }
+
+  async function loadCompare() {
+    const grid = document.getElementById('compare-grid');
+    grid.innerHTML = `
+      <div class="cmp-cell label"></div>
+      <div class="cmp-cell farm-header tc">TC-FARM<span class="cmp-host">10.10.140.100</span></div>
+      <div class="cmp-cell farm-header pt">PT-FARM<span class="cmp-host">10.20.140.100</span></div>
+      <div class="cmp-cell farm-header fat">FATTAL<span class="cmp-host">10.8.0.160</span></div>
+      <div class="cmp-cell section-sep">Loading data from all farms…</div>
+    `;
+
+    const results = await Promise.allSettled(
+      FARMS.map(f => fetch(f.prefix + '/summary').then(r => r.json()))
+    );
+
+    const summaries = results.map(r => r.status === 'fulfilled' ? r.value : null);
+    buildGrid(summaries);
+  }
+
+  window.addEventListener('DOMContentLoaded', loadCompare);
+  </script>
+</body>
+</html>

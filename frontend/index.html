@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TC-FARM | UCS Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <span class="logo">&#x2609; UCS Dashboard</span>
+      <nav class="farm-nav">
+        <a href="/"        class="farm-link active">TC-FARM</a>
+        <a href="/pt"      class="farm-link">PT-FARM</a>
+        <a href="/fattal"  class="farm-link">FATTAL</a>
+        <a href="/compare" class="farm-link">&#x1F4CA; Compare</a>
+        <a href="/devices" class="farm-link">&#x1F5C4; Devices</a>
+      </nav>
+      <div class="header-meta">
+        <span id="host-badge">10.10.140.100</span>
+        <button id="refresh-btn" onclick="loadAll()">&#x21BB; Refresh</button>
+      </div>
+    </div>
+  </header>
+
+  <script>
+  window.FARM_CONFIG = {
+    name:      'TC-FARM',
+    host:      '10.10.140.100',
+    apiPrefix: '/api/tc',
+  };
+  </script>
+
+  <main>
+    <!-- Connection status -->
+    <section id="status-bar">
+      <div id="conn-status" class="status-box checking">Checking connection…</div>
+    </section>
+
+    <!-- KPI cards (always visible) -->
+    <section class="kpi-grid" id="kpi-grid">
+      <div class="kpi-card" id="kpi-fi">
+        <div class="kpi-label">Fabric Interconnects</div>
+        <div class="kpi-value" id="val-fi">–</div>
+      </div>
+      <div class="kpi-card" id="kpi-chassis">
+        <div class="kpi-label">Chassis</div>
+        <div class="kpi-value" id="val-chassis">–</div>
+      </div>
+      <div class="kpi-card" id="kpi-blades">
+        <div class="kpi-label">Blade Servers</div>
+        <div class="kpi-value" id="val-blades">–</div>
+      </div>
+      <div class="kpi-card" id="kpi-racks">
+        <div class="kpi-label">Rack Servers</div>
+        <div class="kpi-value" id="val-racks">–</div>
+      </div>
+      <div class="kpi-card" id="kpi-sp">
+        <div class="kpi-label">Service Profiles</div>
+        <div class="kpi-value" id="val-sp">–</div>
+      </div>
+      <div class="kpi-card fault-card" id="kpi-faults">
+        <div class="kpi-label">Active Faults</div>
+        <div class="fault-pills" id="fault-pills">–</div>
+      </div>
+    </section>
+
+    <!-- System info (open) -->
+    <section class="card collapsible" id="system-section">
+      <div class="card-toggle" data-target="system-body">
+        <span class="card-title">System Info</span>
+        <button class="toggle-btn" aria-label="Toggle">&#x25B2;</button>
+      </div>
+      <div class="card-body" id="system-body">
+        <table id="system-table"><tbody></tbody></table>
+      </div>
+    </section>
+
+    <!-- Fabric Interconnects (open) -->
+    <section class="card collapsible" id="fi-section">
+      <div class="card-toggle" data-target="fi-body">
+        <span class="card-title">Fabric Interconnects</span>
+        <button class="toggle-btn" aria-label="Toggle">&#x25B2;</button>
+      </div>
+      <div class="card-body" id="fi-body">
+        <div class="table-wrap"><table id="fi-table"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- Blade Servers (open) -->
+    <section class="card collapsible" id="blades-section">
+      <div class="card-toggle" data-target="blades-body">
+        <span class="card-title">Blade Servers</span>
+        <button class="toggle-btn" aria-label="Toggle">&#x25B2;</button>
+      </div>
+      <div class="card-body" id="blades-body">
+        <div id="blades-loading" class="loading-msg" style="display:none">&#x23F3; Loading blade hardware details…</div>
+        <div class="table-wrap"><table id="blades-table"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- Rack Servers (open) -->
+    <section class="card collapsible" id="racks-section">
+      <div class="card-toggle" data-target="racks-body">
+        <span class="card-title">Rack Servers</span>
+        <button class="toggle-btn" aria-label="Toggle">&#x25B2;</button>
+      </div>
+      <div class="card-body" id="racks-body">
+        <div class="table-wrap"><table id="racks-table"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- CPU Summary (collapsed) -->
+    <section class="card collapsible collapsed" id="cpu-section">
+      <div class="card-toggle" data-target="cpu-body">
+        <div class="card-toggle-left">
+          <span class="card-title">&#x2699; CPU Summary</span>
+          <span class="row-count" id="cpu-filter-count"></span>
+        </div>
+        <div class="card-toggle-right">
+          <input type="text" class="filter-input" id="cpu-filter" placeholder="חפש: Gold, E5-2699, 22C, 2.20…" />
+          <button class="toggle-btn" aria-label="Toggle">&#x25BC;</button>
+        </div>
+      </div>
+      <div class="card-body" id="cpu-body" style="display:none">
+        <div id="cpu-loading" class="loading-msg">&#x23F3; Loading hardware data…</div>
+        <div class="table-wrap"><table id="cpu-table"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- Memory Summary (collapsed) -->
+    <section class="card collapsible collapsed" id="mem-section">
+      <div class="card-toggle" data-target="mem-body">
+        <div class="card-toggle-left">
+          <span class="card-title">&#x1F4BE; Memory Summary</span>
+          <span class="row-count" id="mem-filter-count"></span>
+        </div>
+        <div class="card-toggle-right">
+          <input type="text" class="filter-input" id="mem-filter" placeholder="חפש: DDR4, 32, 2400, DIMM_A1…" />
+          <button class="toggle-btn" aria-label="Toggle">&#x25BC;</button>
+        </div>
+      </div>
+      <div class="card-body" id="mem-body" style="display:none">
+        <div class="table-wrap"><table id="mem-table"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- PSU (collapsed) -->
+    <section class="card collapsible collapsed" id="psu-section">
+      <div class="card-toggle" data-target="psu-body">
+        <div class="card-toggle-left">
+          <span class="card-title">&#x26A1; Power Supplies (PSU)</span>
+          <span class="row-count" id="psu-filter-count"></span>
+        </div>
+        <div class="card-toggle-right">
+          <input type="text" class="filter-input" id="psu-filter" placeholder="חפש: chassis 3, operable…" />
+          <button class="toggle-btn" aria-label="Toggle">&#x25BC;</button>
+        </div>
+      </div>
+      <div class="card-body" id="psu-body" style="display:none">
+        <div class="table-wrap"><table id="psu-table"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- Fan Modules (collapsed) -->
+    <section class="card collapsible collapsed" id="fans-section">
+      <div class="card-toggle" data-target="fans-body">
+        <div class="card-toggle-left">
+          <span class="card-title">&#x1F32C; Fan Modules</span>
+          <span class="row-count" id="fans-filter-count"></span>
+        </div>
+        <div class="card-toggle-right">
+          <input type="text" class="filter-input" id="fans-filter" placeholder="חפש: chassis 5, degraded…" />
+          <button class="toggle-btn" aria-label="Toggle">&#x25BC;</button>
+        </div>
+      </div>
+      <div class="card-body" id="fans-body" style="display:none">
+        <div class="table-wrap"><table id="fans-table"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- Blade Management IPs (collapsed) -->
+    <section class="card collapsible collapsed" id="blade-ips-section">
+      <div class="card-toggle" data-target="blade-ips-body">
+        <div class="card-toggle-left">
+          <span class="card-title">&#x1F5A7; Blade Management IPs</span>
+          <span class="row-count" id="bladeips-filter-count"></span>
+        </div>
+        <div class="card-toggle-right">
+          <input type="text" class="filter-input" id="bladeips-filter" placeholder="חפש: IP, שם שירות, מארז…" />
+          <button class="toggle-btn" aria-label="Toggle">&#x25BC;</button>
+        </div>
+      </div>
+      <div class="card-body" id="blade-ips-body" style="display:none">
+        <div class="table-wrap"><table id="blade-ips-table"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- Firmware Versions (collapsed) -->
+    <section class="card collapsible collapsed" id="firmware-section">
+      <div class="card-toggle" data-target="firmware-body">
+        <div class="card-toggle-left">
+          <span class="card-title">&#x1F527; Firmware Versions</span>
+          <span class="row-count" id="firmware-filter-count"></span>
+        </div>
+        <div class="card-toggle-right">
+          <input type="text" class="filter-input" id="firmware-filter" placeholder="&#x1F50D; BIOS, CIMC, version..." />
+          <button class="toggle-btn" aria-label="Toggle">&#x25BC;</button>
+        </div>
+      </div>
+      <div class="card-body" id="firmware-body" style="display:none">
+        <div class="table-wrap"><table id="firmware-table"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- Power & Temperature (collapsed) -->
+    <section class="card collapsible collapsed" id="power-section">
+      <div class="card-toggle" data-target="power-body">
+        <span class="card-title">&#x1F321; Power &amp; Temperature</span>
+        <button class="toggle-btn" aria-label="Toggle">&#x25BC;</button>
+      </div>
+      <div class="card-body" id="power-body" style="display:none">
+        <div class="table-wrap"><table id="power-table"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- Physical Adapters / VIC (collapsed) -->
+    <section class="card collapsible collapsed" id="adapters-section">
+      <div class="card-toggle" data-target="adapters-body">
+        <div class="card-toggle-left">
+          <span class="card-title">&#x1F50C; Physical Adapters (VIC)</span>
+          <span class="row-count" id="adapters-filter-count"></span>
+        </div>
+        <div class="card-toggle-right">
+          <input type="text" class="filter-input" id="adapters-filter" placeholder="&#x1F50D; model, serial..." />
+          <button class="toggle-btn" aria-label="Toggle">&#x25BC;</button>
+        </div>
+      </div>
+      <div class="card-body" id="adapters-body" style="display:none">
+        <div class="table-wrap"><table id="adapters-table"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- vNIC Ethernet / MAC (collapsed) -->
+    <section class="card collapsible collapsed" id="vnics-section">
+      <div class="card-toggle" data-target="vnics-body">
+        <div class="card-toggle-left">
+          <span class="card-title">&#x1F310; vNIC Ethernet (MAC Addresses)</span>
+          <span class="row-count" id="vnics-filter-count"></span>
+        </div>
+        <div class="card-toggle-right">
+          <input type="text" class="filter-input" id="vnics-filter" placeholder="&#x1F50D; MAC, interface, chassis..." />
+          <button class="toggle-btn" aria-label="Toggle">&#x25BC;</button>
+        </div>
+      </div>
+      <div class="card-body" id="vnics-body" style="display:none">
+        <div class="table-wrap"><table id="vnics-table"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- vHBA Fibre Channel / WWPN (collapsed) -->
+    <section class="card collapsible collapsed" id="vhbas-section">
+      <div class="card-toggle" data-target="vhbas-body">
+        <div class="card-toggle-left">
+          <span class="card-title">&#x1F4BF; vHBA Fibre Channel (WWPN)</span>
+          <span class="row-count" id="vhbas-filter-count"></span>
+        </div>
+        <div class="card-toggle-right">
+          <input type="text" class="filter-input" id="vhbas-filter" placeholder="&#x1F50D; WWPN, interface..." />
+          <button class="toggle-btn" aria-label="Toggle">&#x25BC;</button>
+        </div>
+      </div>
+      <div class="card-body" id="vhbas-body" style="display:none">
+        <div class="table-wrap"><table id="vhbas-table"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- Pool Availability (collapsed) -->
+    <section class="card collapsible collapsed" id="pools-section">
+      <div class="card-toggle" data-target="pools-body">
+        <span class="card-title">&#x1F3CA; Pool Availability (UUID / IP / MAC / WWPN)</span>
+        <button class="toggle-btn" aria-label="Toggle">&#x25BC;</button>
+      </div>
+      <div class="card-body" id="pools-body" style="display:none">
+        <div class="table-wrap"><table id="pools-table"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- Active Faults (collapsed, always at bottom) -->
+    <section class="card collapsible collapsed" id="faults-section">
+      <div class="card-toggle" data-target="faults-body">
+        <span class="card-title">&#x26A0; Active Faults</span>
+        <button class="toggle-btn" aria-label="Toggle">&#x25BC;</button>
+      </div>
+      <div class="card-body" id="faults-body" style="display:none">
+        <div class="table-wrap"><table id="faults-table"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>UCS Dashboard &copy; 2026 | TC-FARM</footer>
+
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
