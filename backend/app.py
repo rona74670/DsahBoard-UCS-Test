@@ -15,10 +15,12 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from ucs_client import UCSMClient
+from infinidat_client import InfinidatClient
 from database import (
     init_db, migrate_json_if_needed,
     load_manual, save_manual,
     list_devices, get_device, create_device, update_device, delete_device,
+    record_ibox_capacity, get_ibox_capacity_history, compute_days_until_full,
 )
 
 load_dotenv()
@@ -202,6 +204,107 @@ app.include_router(build_farm_router("/api/tc",     TC_HOST,     TC_USER,     TC
 app.include_router(build_farm_router("/api/pt",     PT_HOST,     PT_USER,     PT_PASS,     "pt"))
 app.include_router(build_farm_router("/api/fattal", FATTAL_HOST, FATTAL_USER, FATTAL_PASS, "fattal"))
 
+# ── Infinidat iBox credentials ──────────────────────────────────────────
+IBOX_TC03_HOST = os.getenv("IBOX_TC03_HOST", "ibox-tc-03.allegronet.co.il")
+IBOX_TC03_USER = os.getenv("IBOX_TC03_USER", os.getenv("UCS_USER", ""))
+IBOX_TC03_PASS = os.getenv("IBOX_TC03_PASS", os.getenv("UCS_PASS", ""))
+
+IBOX_TC_OLD_HOST = os.getenv("IBOX_TC_OLD_HOST", "10.10.15.10")
+IBOX_TC_OLD_USER = os.getenv("IBOX_TC_OLD_USER", os.getenv("UCS_USER", ""))
+IBOX_TC_OLD_PASS = os.getenv("IBOX_TC_OLD_PASS", os.getenv("UCS_PASS", ""))
+
+IBOX_PT_HOST = os.getenv("IBOX_PT_HOST", "10.10.25.200")
+IBOX_PT_USER = os.getenv("IBOX_PT_USER", os.getenv("UCS_USER", ""))
+IBOX_PT_PASS = os.getenv("IBOX_PT_PASS", os.getenv("UCS_PASS", ""))
+
+def build_ibox_router(prefix: str, host: str, user: str, pwd: str, ibox_id: str) -> APIRouter:
+    """Return Infinidat REST API routes for one iBox system."""
+    router = APIRouter(prefix=prefix)
+    client = InfinidatClient(host=host, username=user, password=pwd)
+
+    def _run(func):
+        try:
+            return func(client)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+    @router.get("/ping")
+    def ping():
+        try:
+            sys = client.get_system()
+            return {"status": "ok", "host": host, "version": sys.get("version", "")}
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+    @router.get("/summary")
+    def summary():
+        data = _run(lambda c: c.get_summary())
+        # Record capacity reading for trend tracking
+        try:
+            cap = data.get("capacity", {})
+            record_ibox_capacity(
+                ibox_id,
+                phys_free_tb=cap.get("phys_free_tb", 0),
+                phys_total_tb=cap.get("phys_total_tb", 0),
+                phys_pct=cap.get("phys_pct", 0),
+            )
+        except Exception:
+            pass
+        return data
+
+    @router.get("/pools")
+    def pools():
+        return _run(lambda c: c.get_pools())
+
+    @router.get("/volumes")
+    def volumes():
+        return _run(lambda c: c.get_volumes())
+
+    @router.get("/snapshots")
+    def snapshots():
+        return _run(lambda c: c.get_snapshots())
+
+    @router.get("/health")
+    def health():
+        return _run(lambda c: c.get_health())
+
+    @router.get("/replicas")
+    def replicas():
+        return _run(lambda c: c.get_replicas())
+
+    @router.get("/events")
+    def events():
+        return _run(lambda c: c.get_events())
+
+    @router.get("/top-volumes")
+    def top_volumes():
+        return _run(lambda c: c.get_top_volumes())
+
+    @router.get("/cgs")
+    def cgs():
+        return _run(lambda c: c.get_cgs())
+
+    @router.get("/hosts")
+    def hosts():
+        return _run(lambda c: c.get_hosts())
+
+    @router.get("/capacity-trend")
+    def capacity_trend():
+        history = get_ibox_capacity_history(ibox_id, days=30)
+        days_left = compute_days_until_full(history)
+        return {
+            "ibox_id": ibox_id,
+            "readings": len(history),
+            "days_until_full": days_left,
+            "history": history,
+        }
+
+    return router
+
+app.include_router(build_ibox_router("/api/ibox/tc03",  IBOX_TC03_HOST,  IBOX_TC03_USER,  IBOX_TC03_PASS,  "tc03"))
+app.include_router(build_ibox_router("/api/ibox/tc-old", IBOX_TC_OLD_HOST, IBOX_TC_OLD_USER, IBOX_TC_OLD_PASS, "tc-old"))
+app.include_router(build_ibox_router("/api/ibox/pt",     IBOX_PT_HOST,     IBOX_PT_USER,     IBOX_PT_PASS,     "pt"))
+
 
 # ------------------------------------------------------------------ #
 #  Device registry (global — not per-farm)                             #
@@ -266,6 +369,18 @@ if os.path.isdir(FRONTEND_DIR):
     @app.get("/devices")
     def serve_devices():
         return FileResponse(os.path.join(FRONTEND_DIR, "devices.html"))
+
+    @app.get("/infinidat/tc")
+    def serve_infinidat_tc():
+        return FileResponse(os.path.join(FRONTEND_DIR, "infinidat_tc.html"))
+
+    @app.get("/infinidat/tc-old")
+    def serve_infinidat_tc_old():
+        return FileResponse(os.path.join(FRONTEND_DIR, "infinidat_tc_old.html"))
+
+    @app.get("/infinidat/pt")
+    def serve_infinidat_pt():
+        return FileResponse(os.path.join(FRONTEND_DIR, "infinidat_pt.html"))
 
 
 if __name__ == "__main__":

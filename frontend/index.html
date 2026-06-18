@@ -7,6 +7,56 @@
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
+<script>if(localStorage.getItem('sb-collapsed')==='1')document.body.className+=' sb-collapsed';</script>
+<div id="layout">
+  <aside id="sidebar">
+    <button id="sb-toggle" onclick="sbToggle()">
+      <span class="sb-icon">&#9776;</span>
+      <span class="sb-logo">UCS Dashboard</span>
+    </button>
+    <nav class="sb-nav">
+      <div class="sb-group">
+        <div class="sb-group-hdr open" id="grp-ucs" onclick="sbGroup('ucs')">
+          <span class="sb-icon">&#x2609;</span>
+          <span class="sb-label">UCS</span>
+          <span class="sb-arr">&#x25B6;</span>
+        </div>
+        <div class="sb-items" id="items-ucs">
+          <a href="/"        class="sb-item active"><span class="sb-dot"></span><span class="sb-label">TC-FARM</span></a>
+          <a href="/pt"      class="sb-item"><span class="sb-dot"></span><span class="sb-label">PT-FARM</span></a>
+          <a href="/fattal"  class="sb-item"><span class="sb-dot"></span><span class="sb-label">FATTAL</span></a>
+          <a href="/compare" class="sb-item"><span class="sb-dot"></span><span class="sb-label">&#x1F4CA; Compare</span></a>
+        </div>
+      </div>
+      <div class="sb-group">
+        <div class="sb-group-hdr" id="grp-ibox" onclick="sbGroup('ibox')">
+          <span class="sb-icon">&#x1F4BE;</span>
+          <span class="sb-label">Infinidat</span>
+          <span class="sb-arr">&#x25B6;</span>
+        </div>
+        <div class="sb-items closed" id="items-ibox">
+          <a href="/infinidat/tc"     class="sb-item"><span class="sb-dot"></span><span class="sb-label">TC iBox-03</span></a>
+          <a href="/infinidat/tc-old" class="sb-item"><span class="sb-dot"></span><span class="sb-label">Old-Infinidat-TC</span></a>
+          <a href="/infinidat/pt"     class="sb-item"><span class="sb-dot"></span><span class="sb-label">Infinidat-PT</span></a>
+        </div>
+      </div>
+      <div class="sb-group">
+        <div class="sb-group-hdr disabled">
+          <span class="sb-icon">&#x1F5A5;</span><span class="sb-label">Hosts</span><span class="sb-badge">בקרוב</span>
+        </div>
+      </div>
+      <div class="sb-group">
+        <div class="sb-group-hdr disabled">
+          <span class="sb-icon">&#x1F4BE;</span><span class="sb-label">Storage</span><span class="sb-badge">בקרוב</span>
+        </div>
+      </div>
+      <div class="sb-divider"></div>
+      <a href="/devices" class="sb-top-item">
+        <span class="sb-icon">&#x1F5C4;</span><span class="sb-label">Device Registry</span>
+      </a>
+    </nav>
+  </aside>
+  <div id="content-wrap">
   <header>
     <div class="header-inner">
       <span class="logo">&#x2609; UCS Dashboard</span>
@@ -300,6 +350,9 @@
   </main>
 
   <footer>UCS Dashboard &copy; 2026 | TC-FARM</footer>
+  </div><!-- /content-wrap -->
+</div><!-- /layout -->
+  <script src="/static/sidebar.js"></script>
 
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script src="/static/app.js"></script>

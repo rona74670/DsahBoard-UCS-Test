@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Infinidat TC | UCS Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    /* ── Infinidat page overrides ───────────────────────────────── */
+    .ibox-header-meta { display:flex; gap:0.6rem; align-items:center; }
+    .ibox-badge {
+      background:#0d1a2d; color:#58a6ff;
+      border:1px solid #58a6ff; border-radius:5px;
+      padding:0.2rem 0.6rem; font-size:0.8rem; font-weight:600;
+    }
+
+    /* ── Charts row ─────────────────────────────────────────────── */
+    .charts-row {
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      padding: 1.2rem 1.5rem 0.5rem;
+    }
+    .chart-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.2rem 1.5rem;
+      flex: 1 1 220px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .chart-title {
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      align-self: flex-start;
+    }
+    .donut-wrap { position: relative; width: 140px; height: 140px; }
+    .donut-wrap svg { width: 140px; height: 140px; }
+    .donut-center {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      line-height: 1.2;
+    }
+    .donut-pct { font-size: 1.6rem; font-weight: 700; color: var(--text); }
+    .donut-sub { font-size: 0.65rem; color: var(--muted); }
+    .chart-legend {
+      width: 100%; display: flex; flex-direction: column; gap: 0.25rem;
+      font-size: 0.78rem;
+    }
+    .legend-row { display: flex; justify-content: space-between; align-items: center; }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-left: 0.3rem; }
+
+    /* ── Pool usage bars ─────────────────────────────────────────── */
+    .pool-bar-wrap { width: 100%; background: var(--border); border-radius: 4px; height: 6px; }
+    .pool-bar { height: 6px; border-radius: 4px; transition: width 0.4s; }
+
+    /* ── Section grid for health/replicas ───────────────────────── */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin: 0 1.5rem 1.5rem; }
+    @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* ── Pill colours ────────────────────────────────────────────── */
+    .pill { display:inline-block; padding:0.12rem 0.55rem; border-radius:4px; font-size:0.72rem; font-weight:600; }
+    .pill-ok      { background:#0d2010; color:#3fb950; border:1px solid #3fb950; }
+    .pill-warn    { background:#2d1a00; color:#e3b341; border:1px solid #e3b341; }
+    .pill-error   { background:#2d0f0e; color:#f85149; border:1px solid #f85149; }
+    .pill-info    { background:#0d1a2d; color:#58a6ff; border:1px solid #58a6ff; }
+
+    /* ── Loading spinner ─────────────────────────────────────────── */
+    .loading-row td { color: var(--muted); font-style: italic; text-align: center; }
+
+    /* ── Snapshot table name truncation ──────────────────────────── */
+    .snap-name { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  </style>
+</head>
+<body>
+<script>if(localStorage.getItem('sb-collapsed')==='1')document.body.className+=' sb-collapsed';</script>
+<div id="layout">
+  <aside id="sidebar">
+    <button id="sb-toggle" onclick="sbToggle()">
+      <span class="sb-icon">&#9776;</span>
+      <span class="sb-logo">UCS Dashboard</span>
+    </button>
+    <nav class="sb-nav">
+      <div class="sb-group">
+        <div class="sb-group-hdr" id="grp-ucs" onclick="sbGroup('ucs')">
+          <span class="sb-icon">&#x2609;</span>
+          <span class="sb-label">UCS</span>
+          <span class="sb-arr">&#x25B6;</span>
+        </div>
+        <div class="sb-items closed" id="items-ucs">
+          <a href="/"        class="sb-item"><span class="sb-dot"></span><span class="sb-label">TC-FARM</span></a>
+          <a href="/pt"      class="sb-item"><span class="sb-dot"></span><span class="sb-label">PT-FARM</span></a>
+          <a href="/fattal"  class="sb-item"><span class="sb-dot"></span><span class="sb-label">FATTAL</span></a>
+          <a href="/compare" class="sb-item"><span class="sb-dot"></span><span class="sb-label">&#x1F4CA; Compare</span></a>
+        </div>
+      </div>
+      <div class="sb-group">
+        <div class="sb-group-hdr open" id="grp-ibox" onclick="sbGroup('ibox')">
+          <span class="sb-icon">&#x1F4BE;</span>
+          <span class="sb-label">Infinidat</span>
+          <span class="sb-arr">&#x25B6;</span>
+        </div>
+        <div class="sb-items" id="items-ibox">
+          <a href="/infinidat/tc"     class="sb-item active"><span class="sb-dot"></span><span class="sb-label">TC iBox-03</span></a>
+          <a href="/infinidat/tc-old" class="sb-item"><span class="sb-dot"></span><span class="sb-label">Old-Infinidat-TC</span></a>
+          <a href="/infinidat/pt"     class="sb-item"><span class="sb-dot"></span><span class="sb-label">Infinidat-PT</span></a>
+        </div>
+      </div>
+      <div class="sb-group">
+        <div class="sb-group-hdr disabled">
+          <span class="sb-icon">&#x1F5A5;</span><span class="sb-label">Hosts</span><span class="sb-badge">בקרוב</span>
+        </div>
+      </div>
+      <div class="sb-divider"></div>
+      <a href="/devices" class="sb-top-item">
+        <span class="sb-icon">&#x1F5C4;</span><span class="sb-label">Device Registry</span>
+      </a>
+    </nav>
+  </aside>
+  <div id="content-wrap">
+  <header>
+    <div class="header-inner">
+      <span class="logo">&#x1F4BE; Infinidat iBox</span>
+      <div class="ibox-header-meta">
+        <span class="ibox-badge" id="sys-version">v–</span>
+        <span class="ibox-badge" id="sys-host">ibox-tc-03.allegronet.co.il</span>
+        <button id="refresh-btn" onclick="loadAll()">&#x21BB; Refresh</button>
+      </div>
+    </div>
+  </header>
+
+  <script>window.IBOX_CONFIG = { apiPrefix: '/api/ibox/tc03', label: 'TC iBox-03' };</script>
+
+  <!-- Status bar -->
+  <div id="status-bar" class="status-bar" style="display:none"></div>
+
+  <!-- ── KPI row ─────────────────────────────────────────────────── -->
+  <div class="kpi-grid" id="kpi-grid" style="padding:1rem 1.5rem;">
+    <div class="kpi-card"><div class="kpi-label">Physical Total</div><div class="kpi-value" id="kpi-phys-total">–</div></div>
+    <div class="kpi-card"><div class="kpi-label">Physical Free</div><div class="kpi-value" id="kpi-phys-free">–</div></div>
+    <div class="kpi-card"><div class="kpi-label">Virtual Total</div><div class="kpi-value" id="kpi-virt-total">–</div></div>
+    <div class="kpi-card"><div class="kpi-label">Virtual Free</div><div class="kpi-value" id="kpi-virt-free">–</div></div>
+    <div class="kpi-card" title="Thin + Compression + Dedup combined"><div class="kpi-label">Data Reduction</div><div class="kpi-value" id="kpi-dr">–</div><div style="font-size:0.65rem;color:var(--muted);margin-top:0.15rem">thin+compress+dedup</div></div>
+    <div class="kpi-card"><div class="kpi-label">Capacity Savings</div><div class="kpi-value" id="kpi-savings">–</div></div>
+    <div class="kpi-card"><div class="kpi-label">Volumes</div><div class="kpi-value" id="kpi-volumes">–</div></div>
+    <div class="kpi-card"><div class="kpi-label">Snapshots</div><div class="kpi-value" id="kpi-snapshots">–</div></div>
+    <div class="kpi-card"><div class="kpi-label">Pools</div><div class="kpi-value" id="kpi-pools">–</div></div>
+    <div class="kpi-card"><div class="kpi-label">Active Drives</div><div class="kpi-value" id="kpi-drives">–</div></div>
+    <div class="kpi-card"><div class="kpi-label">Failed Drives</div><div class="kpi-value" id="kpi-failed" style="color:var(--critical)">–</div></div>
+    <div class="kpi-card"><div class="kpi-label">Hosts</div><div class="kpi-value" id="kpi-hosts">–</div></div>
+  </div>
+
+  <!-- ── Capacity Charts ──────────────────────────────────────────── -->
+  <div class="charts-row">
+    <div class="chart-card">
+      <div class="chart-title">&#x1F4BF; Physical Capacity</div>
+      <div class="donut-wrap">
+        <svg id="donut-phys" viewBox="0 0 160 160"></svg>
+        <div class="donut-center">
+          <span class="donut-pct" id="donut-phys-pct">–%</span>
+          <span class="donut-sub">Used</span>
+        </div>
+      </div>
+      <div class="chart-legend">
+        <div class="legend-row"><span><span class="legend-dot" style="background:#58a6ff"></span>Used</span><span id="leg-phys-used">–</span></div>
+        <div class="legend-row"><span><span class="legend-dot" style="background:#21262d"></span>Free</span><span id="leg-phys-free">–</span></div>
+        <div class="legend-row"><span><span class="legend-dot" style="background:#444"></span>Total</span><span id="leg-phys-total">–</span></div>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-title">&#x1F4CA; Virtual Capacity</div>
+      <div class="donut-wrap">
+        <svg id="donut-virt" viewBox="0 0 160 160"></svg>
+        <div class="donut-center">
+          <span class="donut-pct" id="donut-virt-pct">–%</span>
+          <span class="donut-sub">Used</span>
+        </div>
+      </div>
+      <div class="chart-legend">
+        <div class="legend-row"><span><span class="legend-dot" style="background:#3fb950"></span>Used</span><span id="leg-virt-used">–</span></div>
+        <div class="legend-row"><span><span class="legend-dot" style="background:#21262d"></span>Free</span><span id="leg-virt-free">–</span></div>
+        <div class="legend-row"><span><span class="legend-dot" style="background:#444"></span>Total</span><span id="leg-virt-total">–</span></div>
+      </div>
+    </div>
+
+    <!-- Pool bars -->
+    <div class="chart-card" style="flex:2 1 380px;">
+      <div class="chart-title">&#x1F5C3; Pool Physical Usage</div>
+      <div id="pool-bars" style="width:100%;display:flex;flex-direction:column;gap:0.7rem;margin-top:0.5rem">
+        <div style="color:var(--muted);font-style:italic;font-size:0.82rem">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Pools table ─────────────────────────────────────────────── -->
+  <div style="margin:1.5rem 1.5rem 0">
+    <div class="card">
+      <div class="card-toggle" onclick="toggleCard(this)">
+        <span class="card-toggle-icon">&#9660;</span>
+        <span class="card-title">&#x1F5C3; Pools Detail</span>
+        <button class="csv-btn" onclick="event.stopPropagation();exportExcel('pools-table','infinidat_pools')">&#x2B07; Excel</button>
+      </div>
+      <div class="card-body">
+        <table id="pools-table" class="data-table">
+          <thead><tr>
+            <th>Pool Name</th>
+            <th>Phys Total (TB)</th><th>Phys Used (TB)</th><th>Phys Free (TB)</th><th>Phys %</th>
+            <th>Virt Total (TB)</th><th>Virt Used (TB)</th><th>Virt Free (TB)</th>
+            <th>Data Reduction</th><th>Savings (TB)</th>
+          </tr></thead>
+          <tbody><tr class="loading-row"><td colspan="10">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Volumes table ───────────────────────────────────────────── -->
+  <div style="margin:1.5rem 1.5rem 0">
+    <div class="card">
+      <div class="card-toggle" onclick="toggleCard(this)">
+        <span class="card-toggle-icon">&#9660;</span>
+        <span class="card-title">&#x1F4E6; Volumes by Pool</span>
+        <button class="csv-btn" onclick="event.stopPropagation();exportExcel('volumes-table','infinidat_volumes')">&#x2B07; Excel</button>
+      </div>
+      <div class="card-body">
+        <table id="volumes-table" class="data-table">
+          <thead><tr>
+            <th>Pool</th><th>Volume Count</th><th>Total Size (TB)</th><th>Total Used (TB)</th>
+          </tr></thead>
+          <tbody><tr class="loading-row"><td colspan="4">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Snapshots ───────────────────────────────────────────────── -->
+  <div style="margin:1.5rem 1.5rem 0">
+    <div class="card">
+      <div class="card-toggle" onclick="toggleCard(this)">
+        <span class="card-toggle-icon">&#9660;</span>
+        <span class="card-title">&#x1F4F8; Snapshots</span>
+        <button class="csv-btn" onclick="event.stopPropagation();exportExcel('snaps-pool-table','infinidat_snapshots_by_pool')">&#x2B07; Excel</button>
+      </div>
+      <div class="card-body">
+        <!-- summary row -->
+        <div style="display:flex;gap:1.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+          <div class="kpi-card" style="flex:0 0 auto;padding:0.6rem 1.2rem;">
+            <div class="kpi-label">Total Snapshots</div>
+            <div class="kpi-value" id="snap-total-count">–</div>
+          </div>
+          <div class="kpi-card" style="flex:0 0 auto;padding:0.6rem 1.2rem;">
+            <div class="kpi-label">Physical Space Used</div>
+            <div class="kpi-value" id="snap-total-disk">–</div>
+            <div style="font-size:0.68rem;color:var(--muted);margin-top:0.2rem">delta בלוקים ייחודיים</div>
+          </div>
+        </div>
+
+        <h4 style="color:var(--muted);font-size:0.8rem;margin-bottom:0.5rem;font-weight:600">BY POOL</h4>
+        <table id="snaps-pool-table" class="data-table" style="margin-bottom:1.5rem">
+          <thead><tr>
+            <th>Pool</th><th>Count</th><th>Physical Space (TB)</th>
+          </tr></thead>
+          <tbody><tr class="loading-row"><td colspan="3">Loading…</td></tr></tbody>
+        </table>
+
+        <!-- OLD SNAPSHOTS SECTION -->
+        <div style="display:flex;align-items:center;gap:1rem;margin-bottom:0.5rem;flex-wrap:wrap;">
+          <h4 style="color:var(--muted);font-size:0.8rem;font-weight:600;margin:0">&#x26A0; DELETION CANDIDATES (100 oldest, unprotected)</h4>
+          <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+            <label style="font-size:0.75rem;color:var(--muted)">Min age (days):</label>
+            <input type="number" id="min-age-filter" value="30" min="0" max="9999"
+              style="width:65px;background:#161b22;border:1px solid var(--border);color:var(--text);border-radius:4px;padding:0.2rem 0.4rem;font-size:0.8rem"
+              oninput="filterCandidates()">
+            <label style="font-size:0.75rem;color:var(--muted)">Pool:</label>
+            <select id="pool-filter" onchange="filterCandidates()"
+              style="background:#161b22;border:1px solid var(--border);color:var(--text);border-radius:4px;padding:0.2rem 0.4rem;font-size:0.8rem">
+              <option value="">All pools</option>
+            </select>
+            <button class="csv-btn" onclick="exportExcel('snap-candidates-table','infinidat_old_snapshots')" style="padding:0.2rem 0.6rem;font-size:0.75rem">&#x2B07; Excel</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.7rem;flex-wrap:wrap;">
+          <span style="font-size:0.72rem;background:#0d2010;border:1px solid #3fb950;color:#3fb950;border-radius:4px;padding:0.15rem 0.5rem">&#x2713; Fresh (&lt;7 days)</span>
+          <span style="font-size:0.72rem;background:#2d1a00;border:1px solid #e3b341;color:#e3b341;border-radius:4px;padding:0.15rem 0.5rem">&#x26A0; Old (30–90 days)</span>
+          <span style="font-size:0.72rem;background:#2d0f0e;border:1px solid #f85149;color:#f85149;border-radius:4px;padding:0.15rem 0.5rem">&#x1F525; Very Old (&gt;90 days)</span>
+        </div>
+        <table id="snap-candidates-table" class="data-table">
+          <thead><tr>
+            <th>Name</th><th>Pool</th><th>Age</th><th>Physical Used (TB)</th><th>Parent Vol Size (TB)</th><th>Created</th><th>Policy</th><th>Children?</th>
+          </tr></thead>
+          <tbody id="snap-candidates-body"><tr class="loading-row"><td colspan="8">Loading…</td></tr></tbody>
+        </table>
+
+        <!-- ── All Snapshots (collapsible) ── -->
+        <div style="margin-top:1.5rem;border-top:1px solid var(--border)">
+          <div id="all-snaps-toggle" onclick="toggleAllSnaps()"
+               style="display:flex;align-items:center;gap:0.75rem;cursor:pointer;padding:0.65rem 0;user-select:none">
+            <span id="all-snaps-arrow" style="color:var(--accent);font-size:0.8rem">&#9654;</span>
+            <span style="color:var(--accent);font-weight:600;font-size:0.85rem">כל הסנאפשוטים</span>
+            <span id="all-snaps-count" style="font-size:0.72rem;background:#1a2a3a;color:#58a6ff;border:1px solid #264d73;border-radius:4px;padding:0.1rem 0.5rem">–</span>
+            <div style="margin-right:auto;display:flex;gap:0.4rem" onclick="event.stopPropagation()">
+              <button class="csv-btn" id="sort-size-btn"  onclick="sortAllSnaps('size')">&#x2195; Size</button>
+              <button class="csv-btn" id="sort-date-btn"  onclick="sortAllSnaps('date')">&#x2195; Date</button>
+              <button class="csv-btn" onclick="exportExcel('all-snaps-table','infinidat_all_snapshots')">&#x2B07; Excel</button>
+            </div>
+          </div>
+          <div id="all-snaps-panel" style="display:none;overflow-y:auto;max-height:520px">
+            <table id="all-snaps-table" class="data-table">
+              <thead><tr><th>Name</th><th>Pool</th><th>Physical (TB)</th><th>Age (days)</th><th>Created</th><th>Status</th></tr></thead>
+              <tbody id="all-snaps-body"><tr><td colspan="6" style="text-align:center;color:var(--muted)">–</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Health ─────────────────────────────────────────────────── -->
+  <div style="margin:1.5rem 1.5rem 0">
+    <div class="card">
+      <div class="card-toggle" onclick="toggleCard(this)">
+        <span class="card-toggle-icon">&#9660;</span>
+        <span class="card-title">&#x2764; Hardware Health</span>
+      </div>
+      <div class="card-body">
+        <div id="health-summary" style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;"></div>
+        <table id="nodes-table" class="data-table">
+          <thead><tr><th>Node</th><th>State</th><th>Model</th><th>BBU</th></tr></thead>
+          <tbody><tr class="loading-row"><td colspan="4">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Events ──────────────────────────────────────────────────── -->
+  <div style="margin:0 1.5rem 1.5rem">
+    <div class="card">
+      <div class="card-toggle" onclick="toggleCard(this)">
+        <span class="card-toggle-icon">&#9660;</span>
+        <span class="card-title">&#x26A0; Recent Alerts</span>
+      </div>
+      <div class="card-body">
+        <table id="events-table" class="data-table">
+          <thead><tr><th>Time</th><th>Level</th><th>Description</th></tr></thead>
+          <tbody><tr class="loading-row"><td colspan="3">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Capacity Trend + Days Until Full ───────────────────────── -->
+  <div style="margin:0 1.5rem 1.5rem">
+    <div class="card">
+      <div class="card-toggle" onclick="toggleCard(this)">
+        <span class="card-toggle-icon">&#9660;</span>
+        <span class="card-title">&#x1F4C8; Capacity Trend — Days Until Full</span>
+      </div>
+      <div class="card-body">
+        <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1rem;align-items:center;">
+          <div class="kpi-card" style="flex:0 0 auto;padding:0.6rem 1.5rem;" id="days-full-card">
+            <div class="kpi-label">Estimated Days Until Full</div>
+            <div class="kpi-value" id="days-until-full" style="font-size:2rem">–</div>
+            <div style="font-size:0.68rem;color:var(--muted);margin-top:0.15rem" id="days-full-note">טוען נתונים היסטוריים…</div>
+          </div>
+          <div style="flex:1;min-width:220px;font-size:0.8rem;color:var(--muted);line-height:1.6">
+            חישוב על בסיס רגרסיה לינארית של קריאות קיבולת שנאספו בכל Refresh.<br>
+            הנתון יהיה מדויק יותר לאחר מספר ימים של איסוף נתונים.
+          </div>
+        </div>
+        <div id="trend-chart-wrap" style="width:100%;overflow-x:auto;">
+          <canvas id="trend-canvas" height="120" style="width:100%;min-width:300px;background:#0d1117;border-radius:6px;"></canvas>
+          <div id="trend-empty" style="color:var(--muted);font-style:italic;font-size:0.82rem;padding:1rem 0;display:none">
+            אין מספיק נתונים עדיין — רענן כמה פעמים במרוצת הימים הקרובים.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Top 10 Volumes + Unprotected ──────────────────────────── -->
+  <div style="margin:0 1.5rem 1.5rem">
+    <div class="card">
+      <div class="card-toggle" onclick="toggleCard(this)">
+        <span class="card-toggle-icon">&#9660;</span>
+        <span class="card-title">&#x1F4E6; Top 10 Volumes + Unprotected</span>
+        <button class="csv-btn" onclick="event.stopPropagation();exportExcel('unprotected-table','infinidat_unprotected_volumes')" style="margin-left:0.5rem">&#x2B07; Unprotected</button>
+      </div>
+      <div class="card-body">
+        <h4 style="color:var(--muted);font-size:0.8rem;margin-bottom:0.5rem;font-weight:600">TOP 10 LARGEST VOLUMES</h4>
+        <table id="top-vols-table" class="data-table" style="margin-bottom:1.5rem">
+          <thead><tr><th>Name</th><th>Pool</th><th>Size (TB)</th><th>Used (TB)</th><th>Type</th><th>Mapped</th><th>Snapshot Policy</th></tr></thead>
+          <tbody><tr class="loading-row"><td colspan="7">Loading…</td></tr></tbody>
+        </table>
+        <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:0.5rem;">
+          <h4 style="color:#f85149;font-size:0.8rem;font-weight:600;margin:0">&#x26A0; VOLUMES WITHOUT SNAPSHOT POLICY</h4>
+          <span id="unprotected-badge" style="font-size:0.72rem;background:#2d0f0e;color:#f85149;border:1px solid #f85149;border-radius:4px;padding:0.1rem 0.5rem">–</span>
+        </div>
+        <table id="unprotected-table" class="data-table">
+          <thead><tr><th>Name</th><th>Pool</th><th>Size (TB)</th><th>Used (TB)</th><th>Mapped</th></tr></thead>
+          <tbody><tr class="loading-row"><td colspan="5">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Consistency Groups + Hosts ─────────────────────────────── -->
+  <div class="two-col" style="margin:0 1.5rem 1.5rem">
+    <div class="card" style="margin:0">
+      <div class="card-toggle" onclick="toggleCard(this)">
+        <span class="card-toggle-icon">&#9660;</span>
+        <span class="card-title">&#x1F4CB; Consistency Groups</span>
+      </div>
+      <div class="card-body">
+        <table id="cgs-table" class="data-table">
+          <thead><tr><th>Name</th><th>Type</th><th>Replicated</th><th>Children</th></tr></thead>
+          <tbody><tr class="loading-row"><td colspan="4">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card" style="margin:0">
+      <div class="card-toggle" onclick="toggleCard(this)">
+        <span class="card-toggle-icon">&#9660;</span>
+        <span class="card-title">&#x1F5A5; Hosts</span>
+      </div>
+      <div class="card-body">
+        <div id="hosts-kpis" style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;"></div>
+        <table id="hosts-type-table" class="data-table">
+          <thead><tr><th>Type</th><th>Count</th></tr></thead>
+          <tbody><tr class="loading-row"><td colspan="2">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Enhanced Replicas ──────────────────────────────────────── -->
+  <div style="margin:0 1.5rem 1.5rem">
+    <div class="card">
+      <div class="card-toggle" onclick="toggleCard(this)">
+        <span class="card-toggle-icon">&#9660;</span>
+        <span class="card-title">&#x1F501; Replication Detail</span>
+      </div>
+      <div class="card-body">
+        <table id="replicas-table" class="data-table">
+          <thead><tr><th>ID</th><th>State</th><th>Role</th><th>Entity Type</th><th>Last Sync</th><th>Duration</th><th>Job State</th></tr></thead>
+          <tbody><tr class="loading-row"><td colspan="7">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <footer>UCS Dashboard &copy; 2026 | Infinidat TC</footer>
+  </div><!-- /content-wrap -->
+</div><!-- /layout -->
+
+<script src="/static/sidebar.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="/static/infinidat.js"></script>
+</body>
+</html>

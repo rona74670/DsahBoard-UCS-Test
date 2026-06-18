@@ -21,9 +21,110 @@ body {
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
+}
+
+/* ===== Sidebar Layout ===== */
+#layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+#sidebar {
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  width: 220px;
+  background: #080c12;
+  border-right: 1px solid var(--border);
+  z-index: 110;
   display: flex;
   flex-direction: column;
+  transition: width 0.22s ease;
+  overflow: hidden;
 }
+body.sb-collapsed #sidebar { width: 50px; }
+
+#content-wrap {
+  margin-left: 220px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  transition: margin-left 0.22s ease;
+}
+body.sb-collapsed #content-wrap { margin-left: 50px; }
+
+/* Sidebar toggle button */
+#sb-toggle {
+  display: flex; align-items: center; gap: 0.7rem;
+  padding: 0.85rem 0.85rem;
+  cursor: pointer; background: transparent;
+  border: none; border-bottom: 1px solid var(--border);
+  color: var(--text); width: 100%; white-space: nowrap;
+}
+#sb-toggle:hover { background: #161b22; }
+.sb-logo { color: var(--accent); font-weight: 700; font-size: 0.88rem; }
+
+/* Sidebar nav */
+.sb-nav { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0.3rem 0; }
+
+/* Group header */
+.sb-group-hdr {
+  display: flex; align-items: center; gap: 0.55rem;
+  padding: 0.62rem 0.85rem;
+  cursor: pointer; color: var(--muted);
+  font-size: 0.75rem; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  white-space: nowrap; user-select: none;
+}
+.sb-group-hdr:hover:not(.disabled) { background: #161b22; color: var(--text); }
+.sb-group-hdr.disabled { opacity: 0.35; cursor: default; }
+.sb-arr { font-size: 0.6rem; margin-left: auto; transition: transform 0.2s; flex-shrink: 0; }
+.sb-group-hdr.open .sb-arr { transform: rotate(90deg); }
+.sb-badge {
+  font-size: 0.6rem; background: #1a1a0a; color: #e3b341;
+  border: 1px solid #e3b341; border-radius: 3px; padding: 0.05rem 0.3rem;
+}
+
+/* Group items container */
+.sb-items { overflow: hidden; max-height: 400px; transition: max-height 0.22s ease; }
+.sb-items.closed { max-height: 0; }
+
+/* Sub-items */
+.sb-item {
+  display: flex; align-items: center; gap: 0.55rem;
+  padding: 0.44rem 0.85rem 0.44rem 2.1rem;
+  color: var(--muted); text-decoration: none;
+  font-size: 0.82rem; white-space: nowrap;
+}
+.sb-item:hover { background: #161b22; color: var(--text); }
+.sb-item.active { color: var(--accent); background: #0c1a30; font-weight: 600; }
+.sb-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+
+/* Top-level items (not in a group) */
+.sb-top-item {
+  display: flex; align-items: center; gap: 0.55rem;
+  padding: 0.62rem 0.85rem;
+  color: var(--muted); text-decoration: none;
+  font-size: 0.82rem; white-space: nowrap;
+}
+.sb-top-item:hover { background: #161b22; color: var(--text); }
+.sb-top-item.active { color: var(--accent); background: #0c1a30; font-weight: 600; }
+
+.sb-divider { height: 1px; background: var(--border); margin: 0.35rem 0; }
+.sb-icon { width: 18px; text-align: center; flex-shrink: 0; font-size: 0.92rem; }
+
+/* Collapsed state: hide text */
+body.sb-collapsed .sb-label,
+body.sb-collapsed .sb-arr,
+body.sb-collapsed .sb-badge,
+body.sb-collapsed .sb-logo,
+body.sb-collapsed .sb-items   { display: none !important; }
+body.sb-collapsed .sb-dot     { display: none; }
+body.sb-collapsed .sb-group-hdr { justify-content: center; padding: 0.72rem; }
+body.sb-collapsed .sb-top-item  { justify-content: center; padding: 0.72rem; }
+
+/* Hide old top nav (moved to sidebar) */
+.farm-nav { display: none !important; }
 
 /* ===== Header ===== */
 header {
@@ -248,7 +349,7 @@ main {
 .table-wrap { overflow: hidden; }
 table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
 thead th {
-  text-align: center;
+  text-align: right;
   padding: 0.45rem 0.6rem;
   color: var(--muted);
   border-bottom: 1px solid var(--border);
@@ -281,7 +382,7 @@ tbody td {
   text-overflow: ellipsis;
   max-width: 0;
 }
-#blades-table thead th { text-align: left; }
+#blades-table thead th { text-align: right; }
 
 /* Advanced tables (CPU/Mem/PSU/Fan/IPs): center-align data cells */
 #cpu-table td, #mem-table td, #psu-table td, #fans-table td, #blade-ips-table td {
@@ -328,6 +429,10 @@ footer {
   font-size: 0.75rem;
   border-top: 1px solid var(--border);
 }
+
+/* ===== Infinidat snapshot age row colours ===== */
+#snap-candidates-table tr:has(td[style*="color:#f85149"]) { background: rgba(248,81,73,0.05); }
+#snap-candidates-table tr:has(td[style*="color:#e3b341"]) { background: rgba(227,179,65,0.04); }
 
 /* ===== Editable cells ===== */
 .editable-cell {

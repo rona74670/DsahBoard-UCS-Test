@@ -68,6 +68,18 @@ def init_db():
                 created_at  TEXT    DEFAULT (datetime('now')),
                 updated_at  TEXT    DEFAULT (datetime('now'))
             );
+
+            CREATE TABLE IF NOT EXISTS ibox_capacity_history (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                ibox_id         TEXT    NOT NULL,
+                recorded_at     INTEGER NOT NULL,
+                phys_free_tb    REAL    NOT NULL,
+                phys_total_tb   REAL    NOT NULL,
+                phys_pct        REAL    NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ibox_cap_hist
+                ON ibox_capacity_history (ibox_id, recorded_at);
         """)
 
 
@@ -198,3 +210,70 @@ def delete_device(device_id: int) -> bool:
     with get_db() as conn:
         cur = conn.execute("DELETE FROM devices WHERE id=?", (device_id,))
     return cur.rowcount > 0
+
+
+# ------------------------------------------------------------------ #
+#  iBox capacity history (for "days until full" projection)            #
+# ------------------------------------------------------------------ #
+
+def record_ibox_capacity(ibox_id: str, phys_free_tb: float,
+                         phys_total_tb: float, phys_pct: float) -> None:
+    """Store one capacity reading. Keep only last 90 days."""
+    import time
+    now_ms = int(time.time() * 1000)
+    cutoff = now_ms - (90 * 86_400_000)
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO ibox_capacity_history
+               (ibox_id, recorded_at, phys_free_tb, phys_total_tb, phys_pct)
+               VALUES (?,?,?,?,?)""",
+            (ibox_id, now_ms, phys_free_tb, phys_total_tb, phys_pct),
+        )
+        conn.execute(
+            "DELETE FROM ibox_capacity_history WHERE ibox_id=? AND recorded_at<?",
+            (ibox_id, cutoff),
+        )
+
+
+def get_ibox_capacity_history(ibox_id: str, days: int = 30) -> list:
+    """Return capacity readings for the last N days, one per day (latest per day)."""
+    import time
+    cutoff = int(time.time() * 1000) - (days * 86_400_000)
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT recorded_at, phys_free_tb, phys_total_tb, phys_pct
+               FROM ibox_capacity_history
+               WHERE ibox_id=? AND recorded_at>=?
+               ORDER BY recorded_at ASC""",
+            (ibox_id, cutoff),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def compute_days_until_full(history: list) -> Optional[float]:
+    """Linear regression on phys_free_tb over time → days until 0."""
+    if len(history) < 2:
+        return None
+    # x = hours since first reading, y = phys_free_tb
+    t0 = history[0]["recorded_at"]
+    xs = [(r["recorded_at"] - t0) / 3_600_000 for r in history]  # hours
+    ys = [r["phys_free_tb"] for r in history]
+    n  = len(xs)
+    sx, sy   = sum(xs), sum(ys)
+    sx2      = sum(x*x for x in xs)
+    sxy      = sum(x*y for x,y in zip(xs, ys))
+    denom    = n * sx2 - sx * sx
+    if denom == 0:
+        return None
+    slope = (n * sxy - sx * sy) / denom      # TB/hour (negative = shrinking free)
+    if slope >= 0:
+        return None                           # growing free space → not filling
+    intercept  = (sy - slope * sx) / n
+    # current free = intercept + slope * (now - t0 in hours)
+    now_x      = (history[-1]["recorded_at"] - t0) / 3_600_000
+    current_free = intercept + slope * now_x
+    if current_free <= 0:
+        return 0.0
+    hours_left   = -current_free / slope     # hours until free==0
+    return round(hours_left / 24, 1)         # convert to days
+
