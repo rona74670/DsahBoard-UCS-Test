@@ -10,6 +10,14 @@ import urllib3
 from typing import Optional
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+import os as _os
+# TLS: set INFRA_CA_BUNDLE to a CA bundle path, 'true' (system CAs), or leave
+# unset/false to skip verification (lab self-signed certs default).
+_CA = _os.getenv("INFRA_CA_BUNDLE", "").strip()
+_TLS_VERIFY = (True if _CA.lower() in ("true", "1")
+               else (_CA if _CA and _CA.lower() not in ("false", "0")
+                     else False))
+
 
 
 class UCSMClient:
@@ -20,7 +28,7 @@ class UCSMClient:
         self.base_url = f"https://{host}/nuova"
         self.cookie: Optional[str] = None
         self.session = requests.Session()
-        self.session.verify = False  # Self-signed cert on lab/UCS gear
+        self.session.verify = _TLS_VERIFY  # Set INFRA_CA_BUNDLE env to enable TLS verification
 
     def _post(self, xml_body: str) -> ET.Element:
         response = self.session.post(

@@ -1,9 +1,17 @@
-"""Infinidat InfiniBox REST API client."""
+﻿"""Infinidat InfiniBox REST API client."""
 import requests
 import urllib3
 from typing import Optional
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+import os as _os
+# TLS: set INFRA_CA_BUNDLE to a CA bundle path, 'true' (system CAs), or leave
+# unset/false to skip verification (lab self-signed certs default).
+_CA = _os.getenv("INFRA_CA_BUNDLE", "").strip()
+_TLS_VERIFY = (True if _CA.lower() in ("true", "1")
+               else (_CA if _CA and _CA.lower() not in ("false", "0")
+                     else False))
+
 
 TB = 1024 ** 4
 GB = 1024 ** 3
@@ -16,13 +24,28 @@ def _bytes_to_tb(b) -> float:
         return 0.0
 
 
+def _drive_type(d: dict, model: str, vendor: str) -> str:
+    """Best-effort drive media type: API field first, then model/vendor hints."""
+    for key in ("type", "drive_type", "media_type", "disk_type", "technology"):
+        val = d.get(key)
+        if val:
+            return str(val).replace("_", " ").strip().upper()
+    hint = f"{vendor} {model}".upper()
+    for token, label in (("NVME", "NVMe"), ("SSD", "SSD"), ("FLASH", "SSD"),
+                         ("NL-SAS", "NL-SAS"), ("NLSAS", "NL-SAS"), ("SAS", "SAS"),
+                         ("SATA", "SATA")):
+        if token in hint:
+            return label
+    return ""
+
+
 class InfinidatClient:
     def __init__(self, host: str, username: str, password: str):
         self.host = host
         self.base = f"https://{host}/api/rest"
         self._session = requests.Session()
         self._session.auth = (username, password)
-        self._session.verify = False
+        self._session.verify = _TLS_VERIFY
 
     def _get(self, path: str, params: Optional[dict] = None):
         r = self._session.get(f"{self.base}/{path}", params=params, timeout=30)
@@ -120,7 +143,7 @@ class InfinidatClient:
         snaps = self._get_all("volumes", {"type": "SNAPSHOT", "sort": "-created_at"})
 
         by_pool: dict = {}
-        total_disk = 0   # sum of disk_usage — actual physical delta each snapshot occupies
+        total_disk = 0
 
         all_detail = []
         has_disk_usage = any(s.get("disk_usage") is not None for s in snaps)
@@ -129,8 +152,6 @@ class InfinidatClient:
         for s in snaps:
             pid   = s.get("pool_id")
             pname = s.get("pool_name", str(pid))
-            # disk_usage = physical delta unique to this snapshot — only available in InfiniBox v8+
-            # On v7.x this field is None; 'used' is the full logical size (not delta) — misleading
             disk  = s.get("disk_usage") or 0 if has_disk_usage else 0
 
             if pid not in by_pool:
@@ -162,7 +183,6 @@ class InfinidatClient:
             for p in by_pool.values()
         ], key=lambda x: x["total_disk"], reverse=True)
 
-        # Best deletion candidates: unprotected, sorted by age desc then relevant size desc
         sort_key = "disk_usage_raw" if has_disk_usage else "used_tb"
         candidates = sorted(
             [s for s in all_detail if not s["write_protected"]],
@@ -172,7 +192,6 @@ class InfinidatClient:
         for s in candidates:
             del s["disk_usage_raw"]
 
-        # Slim list for full-browser table (name, pool, size, date, lock)
         all_snaps_slim = [
             {
                 "name":           s["name"],
@@ -189,7 +208,7 @@ class InfinidatClient:
         return {
             "total_count":      len(snaps),
             "total_disk_tb":    _bytes_to_tb(total_disk),
-            "disk_usage_avail": has_disk_usage,   # False on firmware v7.x
+            "disk_usage_avail": has_disk_usage,
             "by_pool":          by_pool_list,
             "old_candidates":   candidates,
             "all_snapshots":    all_snaps_slim,
@@ -252,10 +271,103 @@ class InfinidatClient:
             })
         return result
 
+    def get_replicas_detailed(self) -> list:
+        """Replicas with entity names, remote host, RPO, and bytes transferred."""
+        import time
+        data  = self._get("replicas")
+        reps  = data.get("result") or []
+        now_ms = int(time.time() * 1000)
+
+        # Build ID → name maps for volumes and CGs (best effort)
+        vol_info: dict = {}
+        cg_info:  dict = {}
+        try:
+            vols = self._get_all("volumes", {"type": "MASTER"})
+            for v in vols:
+                vol_info[v.get("id")] = {
+                    "name":      v.get("name", ""),
+                    "pool_name": v.get("pool_name", ""),
+                    "size_tb":   _bytes_to_tb(v.get("size", 0)),
+                }
+        except Exception:
+            pass
+        try:
+            raw = self._get("cgs", {"page_size": 500})
+            for cg in (raw.get("result") or []):
+                cg_info[cg.get("id")] = cg.get("name", "")
+        except Exception:
+            pass
+
+        result = []
+        for r in reps:
+            jobs = r.get("jobs") or []
+            last_job = jobs[0] if jobs else {}
+            last_sync_ms  = last_job.get("end_time")
+            last_sync_ago = round((now_ms - last_sync_ms) / 60000, 1) if last_sync_ms else None
+            job_dur_s     = round((last_job.get("end_time", 0) - last_job.get("start_time", 0)) / 1000, 1) if last_job else None
+            job_mb        = round((last_job.get("bytes_transferred") or 0) / 1_048_576, 1)
+
+            entity_type      = r.get("entity_type", "")
+            local_entity_id  = r.get("local_entity_id")
+            entity_name      = ""
+            pool_name        = ""
+            entity_size_tb   = None
+
+            if entity_type == "VOLUME" and local_entity_id:
+                info = vol_info.get(local_entity_id, {})
+                entity_name    = info.get("name", "")
+                pool_name      = info.get("pool_name", "")
+                entity_size_tb = info.get("size_tb")
+            elif entity_type in ("CONS_GROUP", "CG") and local_entity_id:
+                entity_name = cg_info.get(local_entity_id, "")
+
+            if not entity_name:
+                entity_name = r.get("description", "") or f"ID:{local_entity_id or r.get('id')}"
+
+            remote_host = r.get("remote_host") or r.get("remote_replication_server") or ""
+            link_type   = (r.get("link_type") or "").upper()
+
+            # sync_interval in Infinidat REST API is in milliseconds
+            sync_interval_ms = r.get("sync_interval") or 0
+            rpo_value_raw    = r.get("rpo_value")
+
+            if link_type == "SYNC" or sync_interval_ms == 0:
+                rpo_min = 0          # synchronous replication â€” zero data loss
+            elif sync_interval_ms:
+                rpo_min = round(sync_interval_ms / 60000, 1)   # ms â†’ minutes
+            elif rpo_value_raw:
+                rpo_min = round(rpo_value_raw / 60, 1)         # assume seconds
+            else:
+                rpo_min = None
+
+            rpo_ok = (last_sync_ago <= max(rpo_min, 1) * 1.2) if (rpo_min is not None and last_sync_ago is not None) else None
+
+            result.append({
+                "id":               r.get("id"),
+                "state":            r.get("state", ""),
+                "entity_type":      entity_type,
+                "entity_name":      entity_name,
+                "pool_name":        pool_name,
+                "entity_size_tb":   entity_size_tb,
+                "role":             r.get("role") or "",
+                "job_state":        r.get("job_state") or "",
+                "last_sync_ms":     last_sync_ms,
+                "last_sync_ago_min": last_sync_ago,
+                "job_duration_s":   job_dur_s,
+                "job_mb":           job_mb,
+                "description":      r.get("description", ""),
+                "remote_host":      remote_host,
+                "link_type":       link_type,
+                "remote_replica_id": r.get("remote_replica_id"),
+                "rpo_min":          rpo_min,
+                "rpo_ok":           rpo_ok,
+                "concurrent":       r.get("concurrent_replica", False),
+            })
+        return result
+
     # ── Top Volumes ───────────────────────────────────────────────────────
     def get_top_volumes(self) -> dict:
         """Top 10 largest volumes + volumes without snapshot policy."""
-        # Largest by provisioned size (only sort that API supports)
         data_top = self._get("volumes", {"type": "MASTER", "page_size": 10, "sort": "-size"})
         top = [
             {
@@ -270,7 +382,6 @@ class InfinidatClient:
             for v in (data_top.get("result") or [])
         ]
 
-        # All master volumes to find unprotected ones
         all_vols = self._get_all("volumes", {"type": "MASTER"})
         unprotected = [
             {
@@ -298,7 +409,6 @@ class InfinidatClient:
         cgs  = data.get("result") or []
         result = []
         for cg in cgs:
-            # Only show top-level CGs (parent_id == null means it's a master, not a snapshot)
             if cg.get("parent_id"):
                 continue
             result.append({
@@ -354,6 +464,143 @@ class InfinidatClient:
             })
         return out
 
+    # ── Performance ──────────────────────────────────────────────────
+    def get_performance(self) -> dict:
+        """Live IOPS/BW/latency via 2-second delta on system/stats."""
+        import time
+
+        def _sample():
+            try:
+                data = self._get("system/stats")
+                ss   = data.get("result", {}).get("system_stats", [])
+                tr = tw = wblk = rblk = 0
+                nodes_out = []
+                for node in ss:
+                    cs   = node.get("cache_stats",     {})
+                    ssds = node.get("ssd_device_stats", {}) or {}
+                    ds   = node.get("drive_stats",      {}) or {}
+                    ntr  = cs.get("total_reads",       0) or 0
+                    ntw  = cs.get("total_writes",      0) or 0
+                    nwb  = cs.get("num_blocks_written", 0) or 0
+                    nrb  = ssds.get("total_block_reads", 0) or 0
+                    lat  = ds.get("response_average",  None)
+                    tr += ntr; tw += ntw; wblk += nwb; rblk += nrb
+                    nodes_out.append({
+                        "node_id": node.get("node_id"), "hostname": node.get("hostname",""),
+                        "total_reads": ntr, "total_writes": ntw,
+                        "write_blocks": nwb, "read_blocks": nrb,
+                        "drive_lat_ms": lat,
+                    })
+                return {"total_reads":tr,"total_writes":tw,"write_blocks":wblk,"read_blocks":rblk}, nodes_out, time.time()
+            except Exception:
+                return None, [], time.time()
+
+        s1, n1_list, t1 = _sample()
+        time.sleep(1)
+        s2, n2_list, t2 = _sample()
+        dt = max(t2 - t1, 0.001)
+
+        def iops(a, b, k): return round(max((b or {}).get(k,0)-(a or {}).get(k,0),0)/dt,1) if a and b else 0
+        def blkmb(a, b, k): return round(max((b or {}).get(k,0)-(a or {}).get(k,0),0)*512/dt/1_048_576,1) if a and b else 0.0
+
+        node_states: dict = {}
+        try:
+            for n in (self._get("components/nodes").get("result") or []):
+                node_states[n.get("name","")] = n.get("state","")
+        except Exception:
+            pass
+
+        nodes_out = []
+        drive_lats = []
+        for a, b in zip(n1_list, n2_list):
+            name = a.get("hostname", f"node-{a.get('node_id','?')}")
+            lat  = b.get("drive_lat_ms")
+            if lat is not None:
+                drive_lats.append(lat)
+            nodes_out.append({
+                "name":          name,
+                "state":         node_states.get(name, "ACTIVE"),
+                "read_iops":     iops(a, b, "total_reads"),
+                "write_iops":    iops(a, b, "total_writes"),
+                "read_bw_mbps":  blkmb(a, b, "read_blocks"),
+                "write_bw_mbps": blkmb(a, b, "write_blocks"),
+                "drive_lat_ms":  round(lat, 1) if lat is not None else None,
+            })
+
+        avg_lat = round(sum(drive_lats)/len(drive_lats), 1) if drive_lats else None
+        ri = iops(s1, s2, "total_reads")
+        wi = iops(s1, s2, "total_writes")
+        return {
+            "total_read_iops":     ri,
+            "total_write_iops":    wi,
+            "total_iops":          round(ri + wi, 1),
+            "total_read_bw_mbps":  blkmb(s1, s2, "read_blocks"),
+            "total_write_bw_mbps": blkmb(s1, s2, "write_blocks"),
+            "avg_drive_lat_ms":    avg_lat,
+            "nodes":               nodes_out,
+        }
+
+    # ── Hardware faults ───────────────────────────────────────────────
+    def get_hardware(self) -> dict:
+        """Drive and FC port status."""
+        drives: list = []
+        fc_ports: list = []
+
+        try:
+            comp = self._get("components").get("result", {})
+
+            for enc in (comp.get("enclosures") or []):
+                enc_id = enc.get("id", "")
+                enc_idx = enc.get("index", enc.get("enclosure_index", enc_id))
+                for d in (enc.get("drives") or []):
+                    model = (d.get("model") or d.get("product_id") or "").strip()
+                    vendor = (d.get("vendor") or "").strip()
+                    drives.append({
+                        "id":      d.get("id"),
+                        "index":   d.get("drive_index"),
+                        "enc":     enc_id,
+                        "enc_index": enc_idx,
+                        "slot":    d.get("drive_index"),
+                        "state":   d.get("state", "UNKNOWN"),
+                        "model":   model,
+                        "vendor":  vendor,
+                        "size_tb": _bytes_to_tb(d.get("bytes_capacity") or 0),
+                        "serial":  (d.get("serial_number") or "").strip(),
+                        "type":    _drive_type(d, model, vendor),
+                    })
+
+            for node in (comp.get("nodes") or []):
+                node_name = node.get("name", "")
+                for p in (node.get("fc_ports") or []):
+                    link = p.get("link_state") or p.get("state", "UNKNOWN")
+                    fc_ports.append({
+                        "id":        p.get("id"),
+                        "name":      p.get("name") or f"{node_name}/fc{p.get('system_interface_port_number','')}",
+                        "wwpn":      p.get("wwpn", ""),
+                        "node":      node_name,
+                        "state":     link,
+                        "speed_mbps": p.get("connection_speed") or p.get("max_speed"),
+                        "enabled":   p.get("enabled", True),
+                    })
+        except Exception:
+            pass
+
+        failed_drives = [d for d in drives if d["state"] not in ("ACTIVE", "PHASING_IN", "TESTING", "AVAILABLE")]
+        fc_down = [p for p in fc_ports if p.get("enabled") and p["state"] not in ("LINK_UP", "OK", None, "UNKNOWN")]
+
+        return {
+            "drives":        drives,
+            "failed_drives": failed_drives,
+            "fc_ports":      fc_ports,
+            "fc_down":       fc_down,
+            "summary": {
+                "total_drives":   len(drives),
+                "failed_drives":  len(failed_drives),
+                "total_fc_ports": len(fc_ports),
+                "fc_down":        len(fc_down),
+            },
+        }
+
     # ── Combined summary ─────────────────────────────────────────────────
     def get_summary(self) -> dict:
         sys  = self.get_system()
@@ -363,6 +610,8 @@ class InfinidatClient:
 
         pools = self.get_pools()
         health = self.get_health()
+        nodes = health.get("nodes") or []
+        model = next((n.get("model", "") for n in nodes if n.get("model")), "")
 
         phys_total = cap.get("total_physical_capacity", 0)
         phys_free  = cap.get("free_physical_space", 0)
@@ -375,6 +624,7 @@ class InfinidatClient:
             "system": {
                 "name":    sys.get("system_name") or self.host,
                 "version": sys.get("version", ""),
+                "model":   model,
                 "host":    self.host,
             },
             "capacity": {
