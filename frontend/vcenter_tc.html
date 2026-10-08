@@ -1,0 +1,1472 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TC-vCenter | תא הטייס</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    .vc-header-meta { display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; }
+    .vc-badge {
+      background:#0d1a2d; color:#58a6ff;
+      border:1px solid #58a6ff; border-radius:5px;
+      padding:0.2rem 0.6rem; font-size:0.8rem; font-weight:600;
+    }
+    .kpi-row {
+      display:flex; flex-wrap:wrap; gap:1rem;
+      padding:1.2rem 1.5rem 0.5rem;
+    }
+    .kpi-card {
+      background:var(--surface); border:1px solid var(--border);
+      border-radius:var(--radius); padding:1rem 1.4rem;
+      min-width:130px; flex:1 1 130px;
+      display:flex; flex-direction:column; gap:0.25rem;
+    }
+    .kpi-label { font-size:0.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
+    .kpi-value { font-size:1.8rem; font-weight:700; color:var(--text); line-height:1; }
+    .kpi-card.green .kpi-value { color:#3fb950; }
+    .kpi-card.red   .kpi-value { color:#f85149; }
+    .kpi-card.blue  .kpi-value { color:#58a6ff; }
+    .kpi-card.amber .kpi-value { color:#e3b341; }
+    .vm-section { padding:0 1.5rem 1.5rem; }
+    .vm-section-hdr {
+      display:flex; align-items:center; gap:0.6rem;
+      font-size:0.85rem; font-weight:700; text-transform:uppercase;
+      letter-spacing:.06em; color:var(--muted);
+      padding:0.8rem 0 0.5rem;
+      border-bottom:1px solid var(--border); margin-bottom:0.6rem;
+    }
+    .vm-section-hdr .dot-on  { width:10px;height:10px;border-radius:50%;background:#3fb950;display:inline-block; }
+    .vm-section-hdr .dot-off { width:10px;height:10px;border-radius:50%;background:#484f58;display:inline-block; }
+    .vm-section-hdr .count-badge {
+      background:var(--surface2,#161b22); border:1px solid var(--border);
+      border-radius:999px; padding:0.1rem 0.55rem; font-size:0.72rem; color:var(--text);
+    }
+    .pill { display:inline-block; padding:0.12rem 0.55rem; border-radius:4px; font-size:0.72rem; font-weight:600; }
+    .pill-on      { background:#0d2010; color:#3fb950; border:1px solid #3fb950; }
+    .pill-off     { background:#1c1c1e; color:#8b949e; border:1px solid #484f58; }
+    .pill-suspend { background:#2d1a00; color:#e3b341; border:1px solid #e3b341; }
+    .res-summary { display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--border); margin:0.65rem 1.5rem 0; border-radius:8px; overflow:hidden; border:1px solid var(--border); }
+    .res-col { background:var(--surface); padding:0.65rem 1.1rem; }
+    .res-col-hdr { font-size:0.7rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; margin-bottom:0.45rem; }
+    .res-col-hdr.total { color:#8b949e; }
+    .res-col-hdr.on    { color:#3fb950; }
+    .res-col-hdr.off   { color:#f85149; }
+    .res-row { display:flex; justify-content:space-between; align-items:baseline; padding:0.1rem 0; border-bottom:1px solid rgba(255,255,255,0.04); }
+    .res-row:last-child { border-bottom:none; }
+    .res-label { font-size:0.75rem; color:var(--muted); }
+    .res-val   { font-size:0.82rem; font-weight:600; font-variant-numeric:tabular-nums; }
+    th.sortable { cursor:pointer; user-select:none; white-space:nowrap; }
+    th.sortable:hover { background:rgba(255,255,255,0.07); }
+    th.sort-active { color:var(--accent); }
+    .sort-arrow { font-size:0.65rem; opacity:0.45; margin-right:2px; }
+    th.sort-active .sort-arrow { opacity:1; }
+    .sap-badge {
+      background:#0d1a2d; color:#79c0ff;
+      border:1px solid #1f6feb; border-radius:4px;
+      padding:0.08rem 0.45rem; font-size:0.72rem; font-family:monospace; font-weight:600;
+    }
+    .vc-toolbar { display:flex; gap:0.8rem; align-items:center; padding:0.6rem 1.5rem 0; }
+    .vc-search {
+      background:var(--surface); border:1px solid var(--border);
+      border-radius:6px; padding:0.4rem 0.8rem;
+      color:var(--text); font-size:0.85rem; min-width:220px;
+    }
+    .vc-search:focus { outline:none; border-color:#58a6ff; }
+    .vc-filter-label { font-size:0.8rem; color:var(--muted); }
+    .vc-select {
+      background:var(--surface); border:1px solid var(--border);
+      border-radius:6px; padding:0.4rem 0.7rem;
+      color:var(--text); font-size:0.85rem;
+    }
+    .export-btn {
+      background:#161b22; color:#58a6ff;
+      border:1px solid #1f6feb; border-radius:6px;
+      padding:0.35rem 0.9rem; font-size:0.82rem;
+      cursor:pointer; white-space:nowrap;
+    }
+    .export-btn:hover { background:#1f6feb; color:#fff; }
+    /* collapsible sections */
+    .collapsible { cursor:pointer; user-select:none; }
+    .collapsible:hover { background:rgba(88,166,255,.05); border-radius:4px; }
+    .collapse-arr { margin-right:auto; font-size:0.75rem; color:var(--muted); transition:transform .2s; }
+    .collapsed { display:none; }
+    /* usage bar */
+    .use-bar-wrap { width:80px; background:var(--border); border-radius:3px; height:5px; display:inline-block; vertical-align:middle; }
+    .use-bar { height:5px; border-radius:3px; }
+    .use-ok   { background:#3fb950; }
+    .use-warn { background:#e3b341; }
+    .use-crit { background:#f85149; }
+    /* status dot */
+    .st-green { color:#3fb950; } .st-red { color:#f85149; } .st-yellow { color:#e3b341; } .st-grey { color:#8b949e; }
+    .cluster-sep td { padding:0.55rem 0.9rem; background:linear-gradient(90deg,#0d1a2d 0%,#111c2e 100%); border-top:2px solid var(--accent); border-bottom:1px solid var(--border); }
+    .cluster-sep-name { font-weight:700; font-size:0.85rem; color:#58a6ff; }
+    .cluster-sep-meta { color:var(--muted); font-size:0.74rem; font-weight:normal; margin-right:0.6rem; }
+    .cluster-diag { display:inline-flex; align-items:center; gap:0.3rem; font-size:0.74rem; font-weight:600; padding:0.13rem 0.5rem; border-radius:4px; margin-right:0.5rem; }
+    .diag-ok   { background:rgba(63,185,80,.12);  color:#3fb950; border:1px solid rgba(63,185,80,.3); }
+    .diag-warn { background:rgba(227,179,65,.12); color:#e3b341; border:1px solid rgba(227,179,65,.3); }
+    .diag-crit { background:rgba(248,81,73,.12);  color:#f85149; border:1px solid rgba(248,81,73,.3); }
+    .redundancy-badge { display:inline-flex; align-items:center; font-size:0.72rem; font-weight:700; padding:0.1rem 0.55rem; border-radius:4px; margin-right:0.4rem; cursor:pointer; white-space:nowrap; background:none; border:inherit; font-family:inherit; }
+    button.redundancy-badge:hover { filter:brightness(1.35); transform:scale(1.04); transition:filter .15s,transform .15s; }
+    .redundancy-badge.n2ok { background:rgba(63,185,80,.14);  color:#3fb950; border:1px solid rgba(63,185,80,.4); }
+    .redundancy-badge.n1ok { background:rgba(210,169,80,.14); color:#d2a845; border:1px solid rgba(210,169,80,.4); }
+    .redundancy-badge.n0   { background:rgba(248,81,73,.14);  color:#f85149; border:1px solid rgba(248,81,73,.4); }
+    .cluster-sep.expandable { cursor:pointer; }
+    .cluster-sep.expandable:hover td { filter:brightness(1.12); }
+    .cluster-detail-row td { padding:0 !important; border:none !important; background:none !important; }
+    .cluster-detail-inner { padding:10px 20px 14px; background:rgba(248,81,73,.04); border-bottom:2px solid rgba(248,81,73,.2); }
+    .cluster-detail-inner.warn { background:rgba(227,179,65,.04); border-bottom-color:rgba(227,179,65,.3); }
+    .cluster-detail-tbl { width:100%; font-size:11px; border-collapse:collapse; }
+    .cluster-detail-tbl th { color:var(--muted); font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; padding:4px 10px 6px; text-align:right; }
+    .cluster-detail-tbl td { padding:5px 10px; border-bottom:1px solid rgba(255,255,255,.05); vertical-align:middle; }
+    .cluster-detail-tbl tr:last-child td { border-bottom:none; }
+    .use-bar-wrap { width:90px !important; height:6px !important; }
+    .use-bar      { height:6px !important; }
+    .loading-row td { color:var(--muted); font-style:italic; text-align:center; }
+    table { width:100%; }
+    th { white-space:nowrap; }
+    td { vertical-align:middle; }
+    .name-cell { font-weight:600; max-width:230px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .os-cell   { max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:0.78rem; }
+    .col-opt-hide { display:none !important; }
+    .role-input {
+      width:100%; min-width:120px; max-width:220px;
+      background:var(--surface); border:1px solid var(--border); border-radius:4px;
+      padding:0.22rem 0.5rem; color:var(--text); font-size:0.78rem;
+    }
+    .role-input:focus { outline:none; border-color:#58a6ff; }
+    .role-input.saved   { border-color:#3fb950; transition:border-color .3s; }
+    .role-input.save-error { border-color:#f85149; }
+    .os-unconfirmed {
+      display:inline-block; margin-right:4px; color:#e3b341;
+      font-size:0.78rem; cursor:help; vertical-align:middle;
+    }
+    .role-text  { white-space:normal; word-break:break-word; font-size:0.78rem; }
+    .role-empty { color:var(--muted); font-size:0.75rem; }
+    .export-btn.active { background:#1f6feb; color:#fff; }
+    .class-select {
+      width:100%; min-width:160px; max-width:230px;
+      background:var(--surface); border:1px solid var(--border); border-radius:4px;
+      padding:0.22rem 0.4rem; color:var(--text); font-size:0.76rem;
+    }
+    .class-select:focus { outline:none; border-color:#58a6ff; }
+    .class-select.saved      { border-color:#3fb950; transition:border-color .3s; }
+    .class-select.save-error { border-color:#f85149; }
+  </style>
+</head>
+<body>
+<script src="/static/auth.js"></script>
+<script>if(localStorage.getItem('sb-collapsed')==='1')document.body.className+=' sb-collapsed';</script>
+<div id="layout">
+  <aside id="sidebar">
+    <button id="sb-toggle" onclick="sbToggle()">
+      <span class="sb-icon">&#9776;</span>
+      <span class="sb-logo">תא הטייס</span>
+    </button>
+    <nav class="sb-nav">
+      <div class="sb-group">
+        <div class="sb-group-hdr" id="grp-ucs" onclick="sbGroup('ucs')">
+          <span class="sb-icon">&#x2609;</span>
+          <span class="sb-label">UCS</span>
+          <span class="sb-arr">&#x25B6;</span>
+        </div>
+        <div class="sb-items closed" id="items-ucs">
+          <a href="/"        class="sb-item"><span class="sb-dot"></span><span class="sb-label">TC-FARM</span></a>
+          <a href="/pt"      class="sb-item"><span class="sb-dot"></span><span class="sb-label">PT-FARM</span></a>
+          <a href="/fattal"  class="sb-item"><span class="sb-dot"></span><span class="sb-label">FATTAL</span></a>
+          <a href="/compare" class="sb-item"><span class="sb-dot"></span><span class="sb-label">&#x1F4CA; Compare</span></a>
+        </div>
+      </div>
+      <div class="sb-group">
+        <div class="sb-group-hdr" id="grp-ibox" onclick="sbGroup('ibox')">
+          <span class="sb-icon">&#x1F4BE;</span>
+          <span class="sb-label">Infinidat</span>
+          <span class="sb-arr">&#x25B6;</span>
+        </div>
+        <div class="sb-items closed" id="items-ibox">
+          <a href="/infinidat/tc"     class="sb-item"><span class="sb-dot"></span><span class="sb-label">TC iBox-03</span></a>
+          <a href="/infinidat/tc-old" class="sb-item"><span class="sb-dot"></span><span class="sb-label">Old-Infinidat-TC</span></a>
+          <a href="/infinidat/pt"     class="sb-item"><span class="sb-dot"></span><span class="sb-label">Infinidat-PT</span></a>
+        </div>
+      </div>
+      <div class="sb-group">
+        <div class="sb-group-hdr open" id="grp-vcenter" onclick="sbGroup('vcenter')">
+          <span class="sb-icon">&#x2601;</span>
+          <span class="sb-label">vCenter</span>
+          <span class="sb-arr">&#x25B6;</span>
+        </div>
+        <div class="sb-items" id="items-vcenter">
+          <a href="/vcenter/overview" class="sb-item"><span class="sb-dot"></span><span class="sb-label">&#x1F310; סקירה כוללת</span></a>
+          <a href="/dr" class="sb-item"><span class="sb-dot"></span><span class="sb-label">&#x21D4; DR Dashboard</span></a>
+          <a href="/vcenter/pt" class="sb-item"><span class="sb-dot"></span><span class="sb-label">PT-vCenter</span></a>
+          <a href="/vcenter/tc" class="sb-item active"><span class="sb-dot"></span><span class="sb-label">TC-vCenter</span></a>
+          <a href="/vcenter/tc8" class="sb-item"><span class="sb-dot"></span><span class="sb-label">TC vCenter8</span></a>
+          <a href="/vcenter/fattal" class="sb-item"><span class="sb-dot"></span><span class="sb-label">Fattal-vCenter</span></a>
+        </div>
+      </div>
+      <div class="sb-group">
+        <div class="sb-group-hdr" id="grp-mgmt" onclick="sbGroup('mgmt')">
+          <span class="sb-icon">&#x2699;</span>
+          <span class="sb-label">ניהול</span>
+          <span class="sb-arr">&#x25B6;</span>
+        </div>
+        <div class="sb-items closed" id="items-mgmt">
+          <a href="/management/customers" class="sb-item"><span class="sb-dot"></span><span class="sb-label">ניהול לקוחות</span></a>
+        </div>
+      </div>
+      <div class="sb-divider"></div>
+      <a href="/devices" class="sb-top-item">
+        <span class="sb-icon">&#x1F5C4;</span><span class="sb-label">Device Registry</span>
+      </a>
+    </nav>
+  </aside>
+
+  <div id="content-wrap">
+  <header>
+    <div class="header-inner">
+      <span class="logo">&#x2601; vCenter</span>
+      <div class="vc-header-meta">
+        <span class="vc-badge" id="vc-version">v–</span>
+        <a class="vc-badge" id="vc-host" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;cursor:pointer" title="פתח את vSphere Client">TC-vCenter</a>
+        <span class="vc-badge" id="vc-status">&#x23F3; טוען...</span>
+        <button id="refresh-btn" onclick="loadAll(true)">&#x21BB; Refresh</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- KPI row -->
+  <div class="kpi-row">
+    <div class="kpi-card">        <div class="kpi-label">סה"כ VMs</div>      <div class="kpi-value" id="kpi-total">–</div></div>
+    <div class="kpi-card green">  <div class="kpi-label">פועלות</div>        <div class="kpi-value" id="kpi-on">–</div></div>
+    <div class="kpi-card red">    <div class="kpi-label">כבויות</div>        <div class="kpi-value" id="kpi-off">–</div></div>
+    <div class="kpi-card amber">  <div class="kpi-label">Suspended</div>     <div class="kpi-value" id="kpi-sus">–</div></div>
+    <div class="kpi-card blue">   <div class="kpi-label">vCPU פעיל</div>    <div class="kpi-value" id="kpi-cpu">–</div></div>
+    <div class="kpi-card blue">   <div class="kpi-label">RAM פעיל (GB)</div><div class="kpi-value" id="kpi-ram">–</div></div>
+    <div class="kpi-card">        <div class="kpi-label">Storage (GB)</div>  <div class="kpi-value" id="kpi-stor">–</div></div>
+    <div class="kpi-card">        <div class="kpi-label">מארחים</div>        <div class="kpi-value" id="kpi-hosts">–</div></div>
+    <div class="kpi-card" id="kpi-ds-risk-card"><div class="kpi-label">Datastores בסיכון</div><div class="kpi-value" id="kpi-ds-risk">–</div></div>
+  </div>
+
+  <!-- Hosts section (collapsible) -->
+  <div class="vm-section">
+    <div class="vm-section-hdr collapsible" onclick="toggleSection('hosts')">
+      <span>&#x1F5A5; מארחים (ESXi Hosts)</span>
+      <span class="count-badge" id="hosts-count">0</span>
+      <span class="collapse-arr" id="arr-hosts">&#x25BC;</span>
+    </div>
+    <div id="section-hosts">
+    <!-- Hosts toolbar -->
+    <div class="vc-toolbar" style="padding:0.4rem 0 0.5rem;">
+      <span class="vc-filter-label">Cluster:</span>
+      <select class="vc-select" id="host-cluster-filter" onchange="filterHosts()">
+        <option value="">כל ה-Clusters</option>
+      </select>
+      <span class="vc-filter-label" id="host-filter-count"></span>
+      <button class="export-btn" onclick="exportHostsToExcel('filtered')">&#x1F4E5; יצוא מסונן</button>
+      <button class="export-btn" onclick="exportHostsToExcel('all')">&#x1F4E5; יצוא הכל</button>
+    </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>מארח</th>
+            <th>Cluster</th>
+            <th>מודל</th>
+            <th>CPU Cores</th>
+            <th>CPU שימוש</th>
+            <th>RAM סה"כ (GB)</th>
+            <th>RAM שימוש</th>
+            <th>סטטוס</th>
+            <th>NTP</th>
+            <th>Datastores</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-hosts">
+          <tr class="loading-row"><td colspan="10">&#x23F3; טוען...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Datastores / Volumes section (collapsible) -->
+  <div class="vm-section">
+    <div class="vm-section-hdr collapsible" onclick="toggleSection('datastores')">
+      <span>&#x1F4BD; Datastores (Volumes)</span>
+      <span class="count-badge" id="ds-count">0</span>
+      <span class="collapse-arr" id="arr-datastores">&#x25BC;</span>
+    </div>
+    <div id="section-datastores">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Datastore</th>
+            <th>Cluster</th>
+            <th>סוג</th>
+            <th>קיבולת (GB)</th>
+            <th>בשימוש (GB)</th>
+            <th>פנוי (GB)</th>
+            <th>% פנוי</th>
+            <th>מצב</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-datastores">
+          <tr class="loading-row"><td colspan="8">&#x23F3; טוען...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- DRS Affinity / Anti-Affinity rules section (collapsible) -->
+  <div class="vm-section">
+    <div class="vm-section-hdr collapsible" onclick="toggleSection('affinity')">
+      <span>&#x1F517; כללי Affinity / Anti-Affinity (DRS)</span>
+      <span class="count-badge" id="affinity-count">0</span>
+      <span class="collapse-arr" id="arr-affinity">&#x25BC;</span>
+    </div>
+    <div id="section-affinity">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Cluster</th>
+            <th>שם הכלל</th>
+            <th>סוג</th>
+            <th>מצב</th>
+            <th>VMs</th>
+            <th>Hosts</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-affinity">
+          <tr class="loading-row"><td colspan="6">&#x23F3; טוען...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- VM Toolbar: search + cluster filter + export -->
+  <div class="vc-toolbar">
+    <input type="search" class="vc-search" id="vm-search" placeholder="&#x1F50D; שם VM / פריוריטי / IP..." oninput="filterVMs()" />
+    <span class="vc-filter-label">Cluster:</span>
+    <select class="vc-select" id="cluster-filter" onchange="filterVMs()">
+      <option value="">כל ה-Clusters</option>
+    </select>
+    <span class="vc-filter-label">DR:</span>
+    <select class="vc-select" id="dr-filter" onchange="filterVMs()">
+      <option value="">הכל</option>
+      <option value="exclude">ללא DR</option>
+      <option value="only">רק DR</option>
+    </select>
+    <span class="vc-filter-label">דומיין:</span>
+    <select class="vc-select" id="domain-filter" onchange="filterVMs()">
+      <option value="">כל הדומיינים</option>
+    </select>
+    <span class="vc-filter-label" id="filter-count"></span>
+    <div style="position:relative;display:inline-block">
+      <button class="export-btn" id="colbtn" onclick="toggleColPanel(event)">&#x1F4CB; עמודות</button>
+      <div id="col-panel" style="display:none;position:absolute;top:110%;right:0;z-index:100;background:var(--surface,#0d1117);border:1px solid var(--border);border-radius:8px;padding:10px 14px;min-width:185px;box-shadow:0 8px 20px rgba(0,0,0,.45)" onclick="event.stopPropagation()"></div>
+    </div>
+    <button class="export-btn" id="role-edit-btn" onclick="toggleRoleEdit()">&#x270F;&#xFE0F; ערוך תפקידים</button>
+    <button class="export-btn" onclick="exportToExcel('filtered')">&#x1F4E5; יצוא מסונן</button>
+    <button class="export-btn" onclick="exportToExcel('all')">&#x1F4E5; יצוא הכל</button>
+    <button class="export-btn" onclick="exportPoweredOffToExcel()">&#x1F4E5; יצוא כבויות</button>
+  </div>
+
+  <!-- Resource summary panel -->
+  <div class="res-summary" id="res-summary">
+    <div class="res-col">
+      <div class="res-col-hdr total">&#x25A6; סה"כ (מסונן)</div>
+      <div class="res-row"><span class="res-label">VMs</span><span class="res-val" id="rs-t-vms">–</span></div>
+      <div class="res-row"><span class="res-label">vCPU</span><span class="res-val" id="rs-t-cpu">–</span></div>
+      <div class="res-row"><span class="res-label">RAM</span><span class="res-val" id="rs-t-ram">–</span></div>
+      <div class="res-row"><span class="res-label">Storage בשימוש</span><span class="res-val" id="rs-t-stor">–</span></div>
+      <div class="res-row"><span class="res-label">Storage מוקצה</span><span class="res-val" id="rs-t-prov">–</span></div>
+    </div>
+    <div class="res-col">
+      <div class="res-col-hdr on">● פועלות</div>
+      <div class="res-row"><span class="res-label">VMs</span><span class="res-val" id="rs-o-vms">–</span></div>
+      <div class="res-row"><span class="res-label">vCPU</span><span class="res-val" id="rs-o-cpu">–</span></div>
+      <div class="res-row"><span class="res-label">RAM</span><span class="res-val" id="rs-o-ram">–</span></div>
+      <div class="res-row"><span class="res-label">Storage בשימוש</span><span class="res-val" id="rs-o-stor">–</span></div>
+      <div class="res-row"><span class="res-label">Storage מוקצה</span><span class="res-val" id="rs-o-prov">–</span></div>
+    </div>
+    <div class="res-col">
+      <div class="res-col-hdr off">○ כבויות</div>
+      <div class="res-row"><span class="res-label">VMs</span><span class="res-val" id="rs-x-vms">–</span></div>
+      <div class="res-row"><span class="res-label">vCPU</span><span class="res-val" id="rs-x-cpu">–</span></div>
+      <div class="res-row"><span class="res-label">RAM</span><span class="res-val" id="rs-x-ram">–</span></div>
+      <div class="res-row"><span class="res-label">Storage בשימוש</span><span class="res-val" id="rs-x-stor">–</span></div>
+      <div class="res-row"><span class="res-label">Storage מוקצה</span><span class="res-val" id="rs-x-prov">–</span></div>
+    </div>
+  </div>
+
+  <!-- Powered ON section (collapsible) -->
+  <div class="vm-section">
+    <div class="vm-section-hdr collapsible" onclick="toggleSection('on')">
+      <span class="dot-on"></span>
+      <span>פועלות (Powered On)</span>
+      <span class="count-badge" id="on-count">0</span>
+      <span class="collapse-arr" id="arr-on">&#x25BC;</span>
+    </div>
+    <div id="section-on">
+      <table class="data-table" id="tbl-on">
+        <thead>
+          <tr>
+            <th class="sortable" data-col="name"         onclick="sortBy('name')">שם VM<span class="sort-arrow">↕</span></th>
+            <th>תפקיד השרת</th>
+            <th>איפיון</th>
+            <th class="sortable" data-col="sap_number"   onclick="sortBy('sap_number')">פריוריטי #<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="customer"     onclick="sortBy('customer')">שם לקוח<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="cluster"      onclick="sortBy('cluster')">Cluster<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="num_cpu"      onclick="sortBy('num_cpu')">vCPU<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="memory_gb"    onclick="sortBy('memory_gb')">RAM (GB)<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="storage_used" onclick="sortBy('storage_used')">Storage בשימוש (GB)<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="storage_prov" onclick="sortBy('storage_prov')">Storage מוקצה (GB)<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="guest_used" onclick="sortBy('guest_used')" title="נתון מתוך מערכת ההפעלה (VMware Tools)">שימוש בתוך ה-OS (GB)<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="guest_os"     onclick="sortBy('guest_os')">Guest OS<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="ip_address"   onclick="sortBy('ip_address')">IP<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="host"         onclick="sortBy('host')">ESXi Host<span class="sort-arrow">↕</span></th>
+            <th class="sortable col-opt col-net_status col-opt-hide" data-col="net_status" onclick="sortBy('net_status')">מצב רשת<span class="sort-arrow">↕</span></th>
+            <th class="sortable col-opt col-nic_count col-opt-hide"  data-col="nic_count"  onclick="sortBy('nic_count')">כרטיסי רשת<span class="sort-arrow">↕</span></th>
+            <th class="col-opt col-hostname col-opt-hide">DNS Name</th>
+            <th class="col-opt col-vmtools_status col-opt-hide">VMtools סטטוס</th>
+            <th class="col-opt col-hw_version col-opt-hide">HW Version</th>
+            <th class="col-opt col-is_thin col-opt-hide">Thin/Thick</th>
+            <th class="col-opt col-time_sync col-opt-hide">שעון מהמארח</th>
+            <th class="col-opt col-port_group col-opt-hide">Port Group</th>
+            <th class="col-opt col-vlan_id col-opt-hide">VLAN</th>
+            <th class="col-opt col-net_type col-opt-hide">סוג רשת</th>
+            <th class="sortable col-opt col-domain col-opt-hide" data-col="domain" onclick="sortBy('domain')">דומיין<span class="sort-arrow">⇕</span></th>
+            <th class="col-opt col-datastore col-opt-hide">Datastore</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-on">
+          <tr class="loading-row"><td colspan="99">&#x23F3; טוען נתונים...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Powered OFF section (collapsible, collapsed by default) -->
+  <div class="vm-section">
+    <div class="vm-section-hdr collapsible" onclick="toggleSection('off')">
+      <span class="dot-off"></span>
+      <span>כבויות (Powered Off / Suspended)</span>
+      <span class="count-badge" id="off-count">0</span>
+      <span class="collapse-arr" id="arr-off">&#x25B6;</span>
+    </div>
+    <div id="section-off" class="collapsed">
+      <table class="data-table" id="tbl-off">
+        <thead>
+          <tr>
+            <th class="sortable" data-col="name"         onclick="sortBy('name')">שם VM<span class="sort-arrow">↕</span></th>
+            <th>תפקיד השרת</th>
+            <th>איפיון</th>
+            <th class="sortable" data-col="sap_number"   onclick="sortBy('sap_number')">פריוריטי #<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="customer"     onclick="sortBy('customer')">שם לקוח<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="cluster"      onclick="sortBy('cluster')">Cluster<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="num_cpu"      onclick="sortBy('num_cpu')">vCPU<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="memory_gb"    onclick="sortBy('memory_gb')">RAM (GB)<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="storage_used" onclick="sortBy('storage_used')">Storage בשימוש (GB)<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="storage_prov" onclick="sortBy('storage_prov')">Storage מוקצה (GB)<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="guest_used" onclick="sortBy('guest_used')" title="נתון מתוך מערכת ההפעלה (VMware Tools)">שימוש בתוך ה-OS (GB)<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="guest_os"     onclick="sortBy('guest_os')">Guest OS<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="ip_address"   onclick="sortBy('ip_address')">IP<span class="sort-arrow">↕</span></th>
+            <th class="sortable" data-col="host"         onclick="sortBy('host')">ESXi Host<span class="sort-arrow">↕</span></th>
+            <th class="sortable col-opt col-net_status col-opt-hide" data-col="net_status" onclick="sortBy('net_status')">מצב רשת<span class="sort-arrow">↕</span></th>
+            <th class="sortable col-opt col-nic_count col-opt-hide"  data-col="nic_count"  onclick="sortBy('nic_count')">כרטיסי רשת<span class="sort-arrow">↕</span></th>
+            <th class="col-opt col-hostname col-opt-hide">DNS Name</th>
+            <th class="col-opt col-vmtools_status col-opt-hide">VMtools סטטוס</th>
+            <th class="col-opt col-hw_version col-opt-hide">HW Version</th>
+            <th class="col-opt col-is_thin col-opt-hide">Thin/Thick</th>
+            <th class="col-opt col-time_sync col-opt-hide">שעון מהמארח</th>
+            <th class="col-opt col-port_group col-opt-hide">Port Group</th>
+            <th class="col-opt col-vlan_id col-opt-hide">VLAN</th>
+            <th class="col-opt col-net_type col-opt-hide">סוג רשת</th>
+            <th class="sortable col-opt col-domain col-opt-hide" data-col="domain" onclick="sortBy('domain')">דומיין<span class="sort-arrow">⇕</span></th>
+            <th class="col-opt col-datastore col-opt-hide">Datastore</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-off">
+          <tr class="loading-row"><td colspan="99">&#x23F3; טוען נתונים...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  </div><!-- /content-wrap -->
+</div><!-- /layout -->
+
+<script src="/static/xlsx.full.min.js"></script>
+<script src="/static/sidebar.js?v=20261005c"></script>
+<script>
+const API_PREFIX = '/api/vcenter/tc';
+const VC_LABEL   = 'TC';
+let _allVMs      = [];
+let _allHosts    = [];
+let _allDatastores    = [];
+let _allAffinityRules = [];
+let _customerMap = {};
+let _vmNotes     = {};
+let _vmClass     = {};
+let _roleEditMode = false;
+const VM_CLASSIFICATIONS = [
+  'שרת אלגרונט בלבד',
+  'שרת בשימוש אלגרונט + לקוחות',
+  'שרת לקוחות תחת דומיין אלגרונט',
+  'שרת אלגרונט אבטחת מידע',
+  'שרת אלגרונט ניטור',
+  'שרת אלגרונט גיבוי',
+  'שרת לוגים',
+  'שרת דומיין פרטי',
+  'מרכזיה',
+  'שרת לניהול סטוראג אלגרונט',
+  'שרת VMware אלגרונט',
+  'אלגרונט החדשה',
+  'DR של תל אביב',
+  'אופטימה ישרוטל',
+  'הילטון',
+  'יוון',
+];
+const VM_ROLES = [
+  'שרת DC',
+  'שרת SQL',
+  'שרת פריוריטי',
+  'שרת סאפ',
+  'שרת טרמינל',
+  'שרת קבצים',
+  'שרת מדפסות',
+  'שרת ברוקר',
+  'שרת ווב',
+  'שרת רישיונות',
+  'שרת קוקפיט',
+  'שרת ניהול קוקפיט',
+  'שרת סייבס',
+  'שרת G4',
+  'שרת GOC',
+  'שרת FTP',
+  'שרת FSlogix',
+  'שרת דואר',
+  'שרת Entra connect',
+  'שרת DB Cache',
+  'שרת ממשקים',
+  'שרת TSG',
+  'שרת אפליקציות',
+  'שרת BI',
+  'שרת SMTP',
+  'שרת רישוי קוקפיט',
+  'קוקפיט טרמינל',
+  'שרת ניהול',
+  'שרת גיבוי',
+  'שרת פרוקסי לגיבוי',
+];
+var _colVis = {};  // optional-column visibility state
+
+function toggleRoleEdit() {
+  _roleEditMode = !_roleEditMode;
+  const btn = document.getElementById('role-edit-btn');
+  if (btn) {
+    btn.textContent = _roleEditMode ? '\u{1F512} סגור עריכה' : '✏️ ערוך תפקידים';
+    btn.classList.toggle('active', _roleEditMode);
+  }
+  if (_allVMs.length) renderTables(_allVMs);
+}
+
+async function apiFetch(path) {
+  const r = await fetch(API_PREFIX + path, {cache: 'no-store'});
+  if (!r.ok) { const txt = await r.text(); throw new Error(`HTTP ${r.status}: ${txt}`); }
+  return r.json();
+}
+
+// ── Collapsible sections ───────────────────────────────────────────────
+function toggleSection(id) {
+  const sec = document.getElementById('section-' + id);
+  const arr = document.getElementById('arr-' + id);
+  sec.classList.toggle('collapsed');
+  arr.innerHTML = sec.classList.contains('collapsed') ? '&#x25B6;' : '&#x25BC;';
+}
+
+// ── Usage bar (traffic-light: green<60, amber 60-80, red>80) ───────────
+function usageBar(pct) {
+  const cls = pct >= 80 ? 'use-crit' : pct >= 60 ? 'use-warn' : 'use-ok';
+  return `<span class="use-bar-wrap"><span class="use-bar ${cls}" style="width:${Math.min(pct,100)}%"></span></span> <span style="font-size:0.75rem;font-weight:600;color:${pct>=80?'#f85149':pct>=60?'#e3b341':'#3fb950'}">${pct}%</span>`;
+}
+
+// ── Cluster diagnosis ──────────────────────────────────────────────────
+function hostStatusLabel(h) {
+  if (h.connection === 'disconnected') return 'מנותק';
+  if (h.power      === 'poweredOff')   return 'כבוי';
+  if (h.status     === 'red')          return 'התראת vSphere';
+  if (h.status     === 'yellow')       return 'אזהרת vSphere';
+  return 'תקין';
+}
+
+function clusterDiagnosis(hosts) {
+  const n = hosts.length;
+  if (!n) return { cls:'diag-ok', icon:'✓', text:'—' };
+  const avgCpu = Math.round(hosts.reduce((s,h)=>s+h.cpu_pct,0)/n);
+  const avgRam = Math.round(hosts.reduce((s,h)=>s+h.mem_pct,0)/n);
+  const maxCpu = Math.max(...hosts.map(h=>h.cpu_pct));
+  const maxRam = Math.max(...hosts.map(h=>h.mem_pct));
+
+  // Critical: disconnected or red vSphere status
+  const critHosts = hosts.filter(h => h.connection === 'disconnected' || h.status === 'red');
+  if (critHosts.length) {
+    const detail = critHosts.map(h =>
+      `${h.name.split('.')[0]} (${hostStatusLabel(h)})`
+    ).join(' · ');
+    return { cls:'diag-crit', icon:'✗', text:`לא תקין: ${detail}` };
+  }
+
+  // Warning: powered off or yellow vSphere status
+  const warnHosts = hosts.filter(h => h.power === 'poweredOff' || h.status === 'yellow');
+  if (warnHosts.length) {
+    const detail = warnHosts.map(h =>
+      `${h.name.split('.')[0]} (${hostStatusLabel(h)})`
+    ).join(' · ');
+    return { cls:'diag-warn', icon:'⚠', text:`שים לב: ${detail}` };
+  }
+
+  if (maxRam >= 90) return { cls:'diag-crit', icon:'⚠', text:`RAM קריטי (שיא ${maxRam}%) — נדרש זיכרון דחוף` };
+  if (maxCpu >= 90) return { cls:'diag-crit', icon:'⚠', text:`CPU קריטי (שיא ${maxCpu}%) — נדרש עיבוד` };
+  if (avgRam >= 80) return { cls:'diag-warn', icon:'⚡', text:`RAM גבוה (ממוצע ${avgRam}%) — שקול הוספת זיכרון` };
+  if (avgCpu >= 80) return { cls:'diag-warn', icon:'⚡', text:`CPU גבוה (ממוצע ${avgCpu}%) — שקול איזון עומסים` };
+  if (avgRam >= 60) return { cls:'diag-warn', icon:'~', text:`RAM מתון (ממוצע ${avgRam}%) — מעקב מומלץ` };
+  if (avgCpu >= 60) return { cls:'diag-warn', icon:'~', text:`CPU מתון (ממוצע ${avgCpu}%) — מעקב מומלץ` };
+  return { cls:'diag-ok', icon:'✓', text:`תקין · CPU ממוצע ${avgCpu}% · RAM ממוצע ${avgRam}%` };
+}
+
+// ── Status dot ─────────────────────────────────────────────────────────
+function statusDot(status) {
+  if (status === 'green')  return '<span class="st-green">&#x25CF;</span>';
+  if (status === 'red')    return '<span class="st-red">&#x25CF;</span>';
+  if (status === 'yellow') return '<span class="st-yellow">&#x25CF;</span>';
+  return '<span class="st-grey">&#x25CF;</span>';
+}
+
+// ── Host row ───────────────────────────────────────────────────────────
+function toggleHostDs(id, el) {
+  const box = document.getElementById(id);
+  if (!box) return;
+  const open = box.style.display === 'none';
+  box.style.display = open ? 'block' : 'none';
+  const arrow = el.querySelector('.host-ds-arrow');
+  if (arrow) arrow.textContent = open ? '▴' : '▾';
+}
+function _fmtHostDatastores(list, hostName) {
+  if (!list || !list.length) return '<span style="color:var(--muted);font-size:0.75rem">—</span>';
+  var e = window.escapeHtml;
+  var crit = list.filter(function(d) { return d.risk === 'critical'; }).length;
+  var warn = list.filter(function(d) { return d.risk === 'warning'; }).length;
+  var summaryColor = crit ? '#f85149' : warn ? '#e3b341' : 'var(--muted)';
+  var summaryParts = [list.length + ' datastores'];
+  if (crit) summaryParts.push(crit + ' קריטי');
+  if (warn) summaryParts.push(warn + ' אזהרה');
+  var detailId = 'hds-' + String(hostName || '').replace(/[^a-z0-9]/gi, '-');
+  var items = list.map(function(d) {
+    var clr  = d.risk === 'critical' ? '#f85149' : d.risk === 'warning' ? '#e3b341' : 'var(--text)';
+    var icon = d.risk === 'critical' ? '⚠ ' : d.risk === 'warning' ? '⚡ ' : '';
+    return '<span style="display:block;font-size:0.72rem;color:' + clr + '" title="פנוי: ' + d.free_gb + ' GB מתוך ' + d.capacity_gb + ' GB (' + d.free_pct + '% פנוי)">' + icon + e(d.name) + ' — ' + d.free_pct + '% פנוי</span>';
+  }).join('');
+  return '<span style="cursor:pointer;font-size:0.75rem;font-weight:600;color:' + summaryColor + '" onclick="toggleHostDs(\'' + detailId + '\', this)">' + summaryParts.join(' · ') + ' <span class="host-ds-arrow">▾</span></span>' +
+         '<div id="' + detailId + '" style="display:none;margin-top:4px">' + items + '</div>';
+}
+function hostRow(h) {
+  const e = window.escapeHtml;
+  return `<tr>
+    <td style="font-weight:600">${e(h.name)}</td>
+    <td>${e(h.cluster)}</td>
+    <td style="font-size:0.78rem;color:var(--muted)">${h.vendor ? e(h.vendor.replace('Cisco Systems Inc','Cisco')) : ''} ${h.model ? e(h.model) : ''}</td>
+    <td>${h.cpu_cores} <span style="color:var(--muted);font-size:0.75rem;">(${h.cpu_pkgs} פק')</span></td>
+    <td>${usageBar(h.cpu_pct)} <span style="color:var(--muted);font-size:0.72rem;">${h.cpu_usage_mhz}/${h.cpu_total_mhz} MHz</span></td>
+    <td>${h.mem_total_gb}</td>
+    <td>${usageBar(h.mem_pct)} <span style="color:var(--muted);font-size:0.72rem;">${h.mem_usage_gb} GB</span></td>
+    <td>${statusDot(h.status)} <span style="color:${h.connection==='disconnected'||h.status==='red'?'#f85149':h.power==='poweredOff'||h.status==='yellow'?'#e3b341':'#3fb950'}">${hostStatusLabel(h)}</span></td>
+    <td>${_fmtNTP(h.ntp_servers)}</td>
+    <td>${_fmtHostDatastores(h.datastores, h.name)}</td>
+  </tr>`;
+}
+
+// ── VM row ─────────────────────────────────────────────────────────────
+const DR_BADGE = '<span style="display:inline-block;background:#1a1030;color:#d2a8ff;border:1px solid #8957e5;border-radius:4px;padding:0.03rem 0.38rem;font-size:0.63rem;font-weight:700;vertical-align:middle;margin-left:5px" title="שכפול ל-DR (SRM)">↔ DR</span>';
+function isDrVM(vm) {
+  if (vm && vm.is_dr_replica) return true;
+  const name = String((vm && vm.name) || '').toLowerCase();
+  const host = String((vm && vm.hostname) || '').toLowerCase();
+  return name.includes('replica') || name.includes('-phvm') || name.includes('srm') ||
+         host.includes('replica') || host.includes('-phvm') || host.includes('srm');
+}
+
+function _fmtGuestUsed(vm) {
+  if (vm.guest_disk_used_gb != null)
+    return "<span title=\"מתוך " + vm.guest_disk_capacity_gb + " GB (סה\"כ מחיצות ב-OS)\">" + vm.guest_disk_used_gb + "</span>";
+  var m = function(t, c, tip) { return "<span title=\"" + tip + "\" style=\"color:" + c + ";font-size:0.75rem;font-weight:600\">" + t + "</span>"; };
+  if (vm.power_state !== "poweredOn") return m("כבוי", "#8b949e", "השרת כבוי - אין נתון מה-OS");
+  if (vm.vmtools_status === "toolsNotInstalled") return m("אין VMtools", "#f85149", "VMware Tools לא מותקן");
+  if (vm.vmtools_status === "toolsNotRunning") return m("VMtools לא רץ", "#e3b341", "VMware Tools מותקן אך לא רץ");
+  return m("אין נתון", "#8b949e", "VMware Tools לא דיווח על דיסקים");
+}
+function _fmtTools(s) {
+  var clr = {toolsOk:'#3fb950', toolsOld:'#e3b341', toolsNotRunning:'#8b949e', toolsNotInstalled:'#f85149'};
+  var lbl = {toolsOk:'עדכני', toolsOld:'ישן', toolsNotRunning:'לא רץ', toolsNotInstalled:'לא מותקן'};
+  return s ? '<span style="color:'+(clr[s]||'#8b949e')+';font-size:0.78rem;font-weight:600">'+(lbl[s]||s)+'</span>'
+           : '<span style="color:var(--muted);font-size:0.78rem">—</span>';
+}
+function _fmtThin(v) {
+  if (v === undefined || v === null) return '<span style="color:var(--muted);font-size:0.75rem">—</span>';
+  return v ? '<span style="color:#3fb950;font-size:0.75rem;font-weight:600">Thin</span>'
+           : '<span style="color:#e3b341;font-size:0.75rem;font-weight:600">Thick</span>';
+}
+function _fmtTimeSync(v) {
+  if (v === undefined || v === null) return '<span style="color:var(--muted);font-size:0.75rem">—</span>';
+  return v ? '<span style="color:#58a6ff;font-size:0.75rem;font-weight:600" title="VMware Tools מסנכרן שעון עם ה-ESXi Host">מהמארח</span>'
+           : '<span style="color:#3fb950;font-size:0.75rem;font-weight:600" title="VM משתמש בשעון עצמאי (NTP/Domain)">עצמאי</span>';
+}
+function _fmtVlan(arr) {
+  if (!arr || !arr.length) return '<span style="color:var(--muted);font-size:0.75rem">—</span>';
+  var e = window.escapeHtml;
+  var parts = arr.filter(function(v) { return v !== null && v !== undefined && v !== ''; })
+               .map(function(v) { return e(String(v)); });
+  if (!parts.length) return '<span style="color:var(--muted);font-size:0.75rem">—</span>';
+  return '<span style="font-size:0.78rem;font-weight:600;color:#58a6ff">' + parts.join(' | ') + '</span>';
+}
+var _VLAN_NET_NAMES = {11:'רשת פנימית אלגרונט', 13:'רשת DMZ אלגרונט', 15:'רשת ניהול', 34:'רשת גיבוי', 3:'DMZ Bezeqint', 9:'רשת לקוחות'};
+function _fmtNetworkType(vlan_ids) {
+  if (!vlan_ids || !vlan_ids.length) return '<span style="color:var(--muted);font-size:0.75rem">—</span>';
+  var names = [];
+  vlan_ids.forEach(function(v) { var n = _VLAN_NET_NAMES[v]; if (n && names.indexOf(n) === -1) names.push(n); });
+  if (!names.length) return '<span style="color:var(--muted);font-size:0.75rem">—</span>';
+  return '<span style="font-size:0.78rem;font-weight:600;color:#e3b341">' + window.escapeHtml(names.join(' | ')) + '</span>';
+}
+function _getDomain(hostname) {
+  if (!hostname) return 'WorkGroup';
+  var dot = hostname.indexOf('.');
+  if (dot === -1 || !hostname.substring(dot + 1)) return 'WorkGroup';
+  return hostname.substring(dot + 1);
+}
+function _fmtDomain(hostname) {
+  var d = _getDomain(hostname);
+  return d === 'WorkGroup'
+    ? '<span style="color:var(--muted);font-size:0.75rem">WorkGroup</span>'
+    : '<span style="font-size:0.78rem">' + window.escapeHtml(d) + '</span>';
+}
+function _fmtNTP(servers) {
+  if (!servers || !servers.length) return '<span style="color:#f85149;font-size:0.72rem;font-weight:600">לא מוגדר</span>';
+  return '<span style="font-size:0.72rem;color:var(--muted)" title="'+window.escapeHtml(servers.join(', '))+'">'+window.escapeHtml(servers.join(' | '))+'</span>';
+}
+function _fmtDatastores(names, risk) {
+  if (!names || !names.length) return '<span style="color:var(--muted);font-size:0.75rem">—</span>';
+  var e = window.escapeHtml;
+  var txt = names.map(e).join(' | ');
+  if (risk === 'critical') return '<span style="color:#f85149;font-weight:700;font-size:0.78rem" title="מקום פנוי קריטי בדאטהסטור עליו נמצא השרת!">⚠ ' + txt + '</span>';
+  if (risk === 'warning')  return '<span style="color:#e3b341;font-weight:600;font-size:0.78rem" title="מקום פנוי נמוך בדאטהסטור עליו נמצא השרת">⚡ ' + txt + '</span>';
+  return '<span style="font-size:0.78rem">' + txt + '</span>';
+}
+
+async function saveVmNote(input) {
+  const vmName = input.dataset.vm;
+  const note = input.value.trim();
+  if ((_vmNotes[vmName] || '') === note) return;
+  input.classList.remove('saved', 'save-error');
+  try {
+    const r = await fetch(API_PREFIX + '/vm-notes', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': window.getCsrfToken ? window.getCsrfToken() : ''},
+      body: JSON.stringify({vm_name: vmName, note}),
+    });
+    if (!r.ok) throw new Error(String(r.status));
+    _vmNotes[vmName] = note;
+    input.classList.add('saved');
+    setTimeout(() => input.classList.remove('saved'), 1200);
+  } catch (e) {
+    input.classList.add('save-error');
+  }
+}
+
+function handleRoleSelect(select) {
+  if (select.value === '__custom__') {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'role-input';
+    input.dataset.vm = select.dataset.vm;
+    input.maxLength = 200;
+    input.placeholder = 'תפקיד השרת…';
+    input.value = '';
+    input.onblur = function () { saveVmNote(this); };
+    input.onkeydown = function (ev) { if (ev.key === 'Enter') this.blur(); };
+    select.replaceWith(input);
+    input.focus();
+    return;
+  }
+  saveVmNote(select);
+}
+
+async function saveVmClass(select) {
+  const vmName = select.dataset.vm;
+  const classification = select.value;
+  if ((_vmClass[vmName] || '') === classification) return;
+  select.classList.remove('saved', 'save-error');
+  try {
+    const r = await fetch(API_PREFIX + '/vm-classification', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': window.getCsrfToken ? window.getCsrfToken() : ''},
+      body: JSON.stringify({vm_name: vmName, classification}),
+    });
+    if (!r.ok) throw new Error(String(r.status));
+    _vmClass[vmName] = classification;
+    select.classList.add('saved');
+    setTimeout(() => select.classList.remove('saved'), 1200);
+  } catch (e) {
+    select.classList.add('save-error');
+  }
+}
+
+function handleClassSelect(select) {
+  if (select.value === '__custom__') {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'class-select';
+    input.dataset.vm = select.dataset.vm;
+    input.maxLength = 200;
+    input.placeholder = 'איפיון…';
+    input.value = '';
+    input.onblur = function () { saveVmClass(this); };
+    input.onkeydown = function (ev) { if (ev.key === 'Enter') this.blur(); };
+    select.replaceWith(input);
+    input.focus();
+    return;
+  }
+  saveVmClass(select);
+}
+
+function vmRow(vm) {
+  const e = window.escapeHtml;
+  const sap = vm.sap_number
+    ? `<span class="sap-badge">${e(vm.sap_number)}</span>`
+    : '<span style="color:var(--muted);font-size:0.75rem;">—</span>';
+  const custName = vm.sap_number && _customerMap[vm.sap_number]
+    ? `<span style="font-size:0.82rem">${e(_customerMap[vm.sap_number])}</span>`
+    : '<span style="color:var(--muted);font-size:0.75rem;">—</span>';
+  const prov = Math.round(diskCapGb(vm) * 10) / 10;
+  const h1 = _colVis.hostname       ? '' : ' col-opt-hide';
+  const h2 = _colVis.vmtools_status  ? '' : ' col-opt-hide';
+  const h3 = _colVis.hw_version      ? '' : ' col-opt-hide';
+  const h4 = _colVis.is_thin         ? '' : ' col-opt-hide';
+  const h5 = _colVis.time_sync       ? '' : ' col-opt-hide';
+  const h6 = _colVis.net_status      ? '' : ' col-opt-hide';
+  const h7 = _colVis.nic_count       ? '' : ' col-opt-hide';
+  const h8 = _colVis.port_group      ? '' : ' col-opt-hide';
+  const h9 = _colVis.vlan_id         ? '' : ' col-opt-hide';
+  const h10 = _colVis.net_type       ? '' : ' col-opt-hide';
+  const h11 = _colVis.domain         ? '' : ' col-opt-hide';
+  const h12 = _colVis.datastore      ? '' : ' col-opt-hide';
+  const roleVal = _vmNotes[vm.name] || '';
+  const osUnconfirmed = vm.guest_os_confirmed === false
+    ? `<span class="os-unconfirmed" title="לא אומת בפועל ע״י VMware Tools — מוצג לפי ה-OS שהוגדר ל-VM, לא בהכרח המערכת המותקנת בפועל">⚠</span>`
+    : '';
+  const nicTotal = vm.nic_total || 0;
+  const nicConn  = vm.nic_connected || 0;
+  const netStatus = nicConn > 0
+    ? '<span style="color:#3fb950;font-size:0.78rem;font-weight:600">מחובר</span>'
+    : '<span style="color:#f85149;font-size:0.78rem;font-weight:600">לא מחובר</span>';
+  const nicCount = nicTotal
+    ? `<span style="font-size:0.78rem;${nicConn > 1 ? 'color:#f85149;font-weight:700' : 'color:var(--text)'}" title="${nicConn} כרטיסים מחוברים מתוך ${nicTotal}${nicConn > 1 ? ' — יותר מכרטיס אחד מחובר, לא תקין' : ''}">${nicConn}/${nicTotal}</span>`
+    : '<span style="color:var(--muted);font-size:0.75rem">—</span>';
+  const roleIsCustom = roleVal && !VM_ROLES.includes(roleVal);
+  const roleCell = _roleEditMode
+    ? (roleIsCustom
+        ? `<input type="text" class="role-input" data-vm="${e(vm.name)}" value="${e(roleVal)}" maxlength="200" placeholder="תפקיד השרת…" onblur="saveVmNote(this)" onkeydown="if(event.key==='Enter')this.blur()">`
+        : `<select class="role-input" data-vm="${e(vm.name)}" onchange="handleRoleSelect(this)"><option value=""></option>` +
+            VM_ROLES.map(r => `<option value="${e(r)}"${r === roleVal ? ' selected' : ''}>${e(r)}</option>`).join('') +
+            `<option value="__custom__">✏️ אחר (הקלדה חופשית)</option></select>`)
+    : (roleVal ? `<span class="role-text" title="${e(roleVal)}">${e(roleVal)}</span>` : '<span class="role-empty">—</span>');
+  const classVal = _vmClass[vm.name] || '';
+  const classIsCustom = classVal && !VM_CLASSIFICATIONS.includes(classVal);
+  const classCell = _roleEditMode
+    ? (classIsCustom
+        ? `<input type="text" class="class-select" data-vm="${e(vm.name)}" value="${e(classVal)}" maxlength="200" placeholder="איפיון…" onblur="saveVmClass(this)" onkeydown="if(event.key==='Enter')this.blur()">`
+        : `<select class="class-select" data-vm="${e(vm.name)}" onchange="handleClassSelect(this)"><option value=""></option>` +
+            VM_CLASSIFICATIONS.map(c => `<option value="${e(c)}"${c === classVal ? ' selected' : ''}>${e(c)}</option>`).join('') +
+            `<option value="__custom__">✏️ אחר (הקלדה חופשית)</option></select>`)
+    : (classVal ? `<span class="role-text" title="${e(classVal)}">${e(classVal)}</span>` : '<span class="role-empty">—</span>');
+  return `<tr>
+    <td class="name-cell" title="${e(vm.name)}">${e(vm.name)}${(isDrVM(vm)||(vm.name||'').toLowerCase().includes('replica')||(vm.name||'').toLowerCase().includes('-phvm')) ? DR_BADGE : ''}</td>
+    <td>${roleCell}</td>
+    <td>${classCell}</td>
+    <td>${sap}</td>
+    <td>${custName}</td>
+    <td style="font-size:0.78rem">${e(vm.cluster)}</td>
+    <td>${vm.num_cpu}</td>
+    <td>${vm.memory_gb}</td>
+    <td>${vm.storage_committed_gb}</td>
+    <td>${prov}</td>
+    <td>${_fmtGuestUsed(vm)}</td>
+    <td class="os-cell" title="${e(vm.guest_os_detail ? vm.guest_os_detail + ' — ' + vm.guest_os : vm.guest_os)}">${osUnconfirmed}${(vm.guest_os_detail || vm.guest_os) ? e(vm.guest_os_detail || vm.guest_os) : '—'}</td>
+    <td>${vm.ip_address ? e(vm.ip_address) : '—'}</td>
+    <td style="font-size:0.78rem;color:var(--muted)">${vm.host ? e(vm.host) : '—'}</td>
+    <td class="col-opt col-net_status${h6}">${netStatus}</td>
+    <td class="col-opt col-nic_count${h7}">${nicCount}</td>
+    <td class="col-opt col-hostname${h1}" style="font-size:0.78rem">${vm.hostname ? e(vm.hostname) : '—'}</td>
+    <td class="col-opt col-vmtools_status${h2}">${_fmtTools(vm.vmtools_status)}</td>
+    <td class="col-opt col-hw_version${h3}" style="font-size:0.78rem;color:var(--muted)">${vm.hw_version ? e(vm.hw_version) : '—'}</td>
+    <td class="col-opt col-is_thin${h4}" style="text-align:center">${_fmtThin(vm.is_thin)}</td>
+    <td class="col-opt col-time_sync${h5}" style="text-align:center">${_fmtTimeSync(vm.time_sync_with_host)}</td>
+    <td class="col-opt col-port_group${h8}" style="font-size:0.78rem">${vm.port_groups&&vm.port_groups.length?e(vm.port_groups.join(' | ')):'\u2014'}</td>
+    <td class="col-opt col-vlan_id${h9}" style="text-align:center">${_fmtVlan(vm.vlan_ids)}</td>
+    <td class="col-opt col-net_type${h10}">${_fmtNetworkType(vm.vlan_ids)}</td>
+    <td class="col-opt col-domain${h11}" style="font-size:0.78rem">${_fmtDomain(vm.hostname)}</td>
+    <td class="col-opt col-datastore${h12}">${_fmtDatastores(vm.datastores, vm.datastore_risk)}</td>
+  </tr>`;
+}
+
+// ── N+X redundancy calculation (matches cluster-detail page formula) ─────────
+function calcRedundancy(clHosts) {
+  const active = clHosts.filter(h => h.connection !== 'disconnected' && h.power !== 'poweredOff');
+  const n = active.length;
+  if (n < 2) return { label: n < 1 ? '—' : 'N+0', cls:'n0', tip:'צריך לפחות 2 מארחים פעילים' };
+
+  const totalRam = active.reduce((s,h)=>s+h.mem_total_gb, 0);
+  const usedRam  = active.reduce((s,h)=>s+h.mem_usage_gb, 0);
+  const freeRam  = totalRam - usedRam;
+  const totalCpu = active.reduce((s,h)=>s+h.cpu_total_mhz, 0);
+  const usedCpu  = active.reduce((s,h)=>s+h.cpu_usage_mhz, 0);
+  const freeCpu  = totalCpu - usedCpu;
+
+  const byRam = [...active].sort((a,b)=>b.mem_total_gb-a.mem_total_gb);
+  const byCpu = [...active].sort((a,b)=>b.cpu_total_mhz-a.cpu_total_mhz);
+
+  const refRam = byRam[0].mem_total_gb  || 1;
+  const refCpu = byCpu[0].cpu_total_mhz || 1;
+
+  // Same formula as cluster-detail analyse(): how many ref-hosts worth of capacity is free
+  const nx = Math.floor(Math.min(freeCpu / refCpu, freeRam / refRam));
+
+  const fmtR = gb => gb>=1024 ? (gb/1024).toFixed(1)+'TB' : Math.round(gb)+'GB';
+  const fmtC = mhz => Math.round(mhz/1000)+'GHz';
+
+  const limitedBy = (freeCpu/refCpu) < (freeRam/refRam) ? 'CPU' : 'RAM';
+  const tip = `יתירות N+${nx} — פנוי: RAM ${fmtR(freeRam)}, CPU ${fmtC(freeCpu)}\n` +
+              `מארח ייחוס: RAM ${fmtR(refRam)}, CPU ${fmtC(refCpu)}\n` +
+              `מוגבל ע"י ${limitedBy}`;
+
+  if (nx >= 2) return { label:`N+${nx} ✓`, cls:'n2ok', tip };
+  if (nx === 1) return { label:'N+1 ✓',    cls:'n1ok', tip };
+
+  const missing = [];
+  if (freeRam < refRam) missing.push(`RAM: פנוי ${fmtR(freeRam)}, נדרש ${fmtR(refRam)}`);
+  if (freeCpu < refCpu) missing.push(`CPU: פנוי ${fmtC(freeCpu)}, נדרש ${fmtC(refCpu)}`);
+  return { label:'N+0 ✗', cls:'n0', tip:`אין יתירות!\n${missing.join('\n')}` };
+}
+
+// ── Toggle cluster detail panel ─────────────────────────────────────────
+function toggleClusterDetail(id) {
+  const row   = document.getElementById(id);
+  const badge = document.getElementById(id + '-badge');
+  if (!row) return;
+  const open = row.style.display === 'none';
+  row.style.display = open ? '' : 'none';
+  if (badge) {
+    const arrow = badge.querySelector('.diag-arrow');
+    if (arrow) arrow.textContent = open ? '▴' : '▾';
+  }
+}
+
+// ── Open cluster detail page ───────────────────────────────────────────
+function openClusterDetail(e, clusterName) {
+  e.stopPropagation();
+  const p = new URLSearchParams({api: API_PREFIX, env: VC_LABEL, cluster: clusterName});
+  window.location.href = '/vcenter/cluster-detail?' + p.toString();
+}
+
+// ── Render hosts table (grouped by cluster with separator + diagnosis) ──
+function renderHosts(hosts) {
+  const cf       = document.getElementById('host-cluster-filter').value;
+  const filtered = cf ? hosts.filter(h => h.cluster === cf) : hosts;
+  if (!filtered.length) {
+    document.getElementById('tbody-hosts').innerHTML = '<tr class="loading-row"><td colspan="10">אין מארחים</td></tr>';
+    document.getElementById('hosts-count').textContent = 0;
+    document.getElementById('host-filter-count').textContent = '';
+    return;
+  }
+  const order = [], groups = {};
+  filtered.forEach(h => {
+    if (!groups[h.cluster]) { order.push(h.cluster); groups[h.cluster] = []; }
+    groups[h.cluster].push(h);
+  });
+  let html = '';
+  order.forEach(clName => {
+    const clHosts  = groups[clName];
+    const d        = clusterDiagnosis(clHosts);
+    const avgCpu   = Math.round(clHosts.reduce((s,h)=>s+h.cpu_pct,0)/clHosts.length);
+    const avgRam   = Math.round(clHosts.reduce((s,h)=>s+h.mem_pct,0)/clHosts.length);
+    const badHosts = clHosts.filter(h =>
+      h.connection === 'disconnected' || h.status === 'red' ||
+      h.power === 'poweredOff'        || h.status === 'yellow');
+    const detailId = 'cld-' + clName.replace(/[^a-z0-9]/gi,'-');
+    const hasBad   = badHosts.length > 0;
+    const red      = calcRedundancy(clHosts);
+    const clNameEsc = clName.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+    html += `<tr class="cluster-sep${hasBad?' expandable':''}"${hasBad?` onclick="toggleClusterDetail('${detailId}')"`:''}>
+      <td colspan="10">
+        <span class="cluster-sep-name">&#x1F4C1; ${clNameEsc}</span>
+        <span class="cluster-sep-meta">${clHosts.length} מארחים · CPU ממוצע ${avgCpu}% · RAM ממוצע ${avgRam}%</span>
+        <button class="redundancy-badge ${red.cls}" title="${red.tip.replace(/\n/g,'&#10;')}" data-cluster="${clNameEsc}" onclick="openClusterDetail(event, this.dataset.cluster)">${red.label}</button>
+        <span class="cluster-diag ${d.cls}" id="${detailId}-badge">${d.icon} ${d.text}${hasBad?' <span class="diag-arrow">▾</span>':''}</span>
+      </td></tr>`;
+
+    if (hasBad) {
+      const innerCls = d.cls === 'diag-crit' ? '' : 'warn';
+      html += `<tr class="cluster-detail-row" id="${detailId}" style="display:none"><td colspan="10">
+        <div class="cluster-detail-inner ${innerCls}">
+          <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:8px">📋 פירוט מארחים עם בעיות:</div>
+          <table class="cluster-detail-tbl">
+            <thead><tr><th>מארח</th><th>סטטוס vSphere</th><th>חיבור</th><th>הפעלה</th><th>משמעות</th></tr></thead>
+            <tbody>
+              ${badHosts.map(h => {
+                const stClr  = (h.status==='red'||h.connection==='disconnected') ? '#f85149' : '#e3b341';
+                const conClr = h.connection==='disconnected' ? '#f85149' : 'var(--muted)';
+                const pwrClr = h.power==='poweredOff' ? '#8b949e' : 'var(--muted)';
+                const note   = h.connection==='disconnected' ? 'מנותק מה-vCenter — ייתכן שנדרש reconnect'
+                             : h.status==='red'   ? 'תקלה חומרתית — בדוק Alarms & Events ב-vCenter'
+                             : h.power==='poweredOff' ? 'המארח כבוי'
+                             : h.status==='yellow' ? 'אזהרה — בדוק Alarms & Events ב-vCenter' : '';
+                return `<tr>
+                  <td><strong>${window.escapeHtml(h.name)}</strong></td>
+                  <td>${statusDot(h.status)} <span style="color:${stClr}">${window.escapeHtml(h.status)}</span></td>
+                  <td style="color:${conClr}">${window.escapeHtml(h.connection)}</td>
+                  <td style="color:${pwrClr}">${window.escapeHtml(h.power)}</td>
+                  <td style="color:var(--muted);font-style:italic;font-size:10px">${note}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </td></tr>`;
+    }
+
+    html += clHosts.map(hostRow).join('');
+  });
+  document.getElementById('tbody-hosts').innerHTML = html;
+  document.getElementById('hosts-count').textContent = filtered.length;
+  document.getElementById('host-filter-count').textContent =
+    cf ? `מציג ${filtered.length} מתוך ${hosts.length}` : '';
+}
+
+// ── Datastores (volumes) risk & rendering ───────────────────────────────
+function _riskBadge(risk) {
+  if (risk === 'critical') return '<span style="background:#4a1414;color:#f85149;border:1px solid #f85149;border-radius:4px;padding:0.1rem 0.5rem;font-size:0.72rem;font-weight:700">⚠ קריטי — עלול להיגמר המקום</span>';
+  if (risk === 'warning')  return '<span style="background:#3a2e0a;color:#e3b341;border:1px solid #e3b341;border-radius:4px;padding:0.1rem 0.5rem;font-size:0.72rem;font-weight:700">⚡ אזהרה — מקום פנוי נמוך</span>';
+  return '<span style="color:#3fb950;font-size:0.72rem;font-weight:600">✓ תקין</span>';
+}
+function renderDatastores(list) {
+  const tbody = document.getElementById('tbody-datastores');
+  if (!tbody) return;
+  if (!list || !list.length) {
+    tbody.innerHTML = '<tr class="loading-row"><td colspan="8">אין datastores</td></tr>';
+    document.getElementById('ds-count').textContent = 0;
+    document.getElementById('kpi-ds-risk').textContent = 0;
+    return;
+  }
+  const e = window.escapeHtml;
+  const sorted = [...list].sort((a, b) => a.free_pct - b.free_pct);
+  tbody.innerHTML = sorted.map(d => {
+    const rowBg = d.risk === 'critical' ? 'rgba(248,81,73,.08)' : d.risk === 'warning' ? 'rgba(227,179,65,.08)' : '';
+    return `<tr${rowBg ? ` style="background:${rowBg}"` : ''}>
+      <td style="font-weight:600">${e(d.name)}</td>
+      <td style="font-size:0.78rem">${(d.clusters||[]).map(e).join(', ') || '—'}</td>
+      <td style="font-size:0.78rem;color:var(--muted)">${e(d.type || '—')}</td>
+      <td>${d.capacity_gb}</td>
+      <td>${d.used_gb}</td>
+      <td>${d.free_gb}</td>
+      <td>${usageBar(Math.round(100 - d.free_pct))} <span style="font-size:0.72rem;color:var(--muted)">(${d.free_pct}% פנוי)</span></td>
+      <td>${_riskBadge(d.risk)}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('ds-count').textContent = list.length;
+  const riskCount = list.filter(d => d.risk !== 'ok').length;
+  const kpi = document.getElementById('kpi-ds-risk');
+  kpi.textContent = riskCount;
+  const card = document.getElementById('kpi-ds-risk-card');
+  if (card) card.className = 'kpi-card' + (riskCount > 0 ? ' red' : ' green');
+}
+
+// ── DRS Affinity / Anti-Affinity rules rendering ────────────────────────
+var _RULE_TYPE_LABEL = {
+  'affinity':              'Affinity (יחד)',
+  'anti-affinity':         'Anti-Affinity (בנפרד)',
+  'vm-host-affinity':      'VM-Host Affinity',
+  'vm-host-anti-affinity': 'VM-Host Anti-Affinity',
+};
+function renderAffinityRules(rules) {
+  const tbody = document.getElementById('tbody-affinity');
+  if (!tbody) return;
+  if (!rules || !rules.length) {
+    tbody.innerHTML = '<tr class="loading-row"><td colspan="6">אין כללי Affinity מוגדרים</td></tr>';
+    document.getElementById('affinity-count').textContent = 0;
+    return;
+  }
+  const e = window.escapeHtml;
+  tbody.innerHTML = rules.map(r => `<tr>
+    <td style="font-size:0.78rem">${e(r.cluster)}</td>
+    <td style="font-weight:600">${e(r.name)}</td>
+    <td style="font-size:0.78rem">${e(_RULE_TYPE_LABEL[r.type] || r.type)}</td>
+    <td>${r.enabled ? '<span style="color:#3fb950;font-size:0.78rem;font-weight:600">פעיל</span>' : '<span style="color:var(--muted);font-size:0.78rem">כבוי</span>'}</td>
+    <td style="font-size:0.76rem">${(r.vms||[]).map(e).join(', ') || '—'}</td>
+    <td style="font-size:0.76rem">${(r.hosts||[]).map(e).join(', ') || '—'}</td>
+  </tr>`).join('');
+  document.getElementById('affinity-count').textContent = rules.length;
+}
+
+// ── Resource summary ───────────────────────────────────────────────────
+function fmtGB(gb) {
+  if (gb >= 1024) return (gb / 1024).toFixed(1) + ' TB';
+  return Math.round(gb) + ' GB';
+}
+// The server's actual configured/allocated disk size (sum of its virtual disks'
+// capacity) — this is what customer pricing is based on, NOT committed+uncommitted
+// (vSphere's "Provisioned Storage"), which also includes transient overhead like
+// active snapshot delta files and .vswp swap files. Falls back to committed+
+// uncommitted only when the field is unavailable (older cached data).
+function diskCapGb(v) {
+  return (v.storage_disk_capacity_gb != null)
+    ? v.storage_disk_capacity_gb
+    : (v.storage_committed_gb || 0) + (v.storage_uncommitted_gb || 0);
+}
+function sumRes(arr) {
+  return {
+    vms:  arr.length,
+    cpu:  arr.reduce((s,v) => s + (v.num_cpu || 0), 0),
+    ram:  arr.reduce((s,v) => s + (v.memory_gb || 0), 0),
+    stor: arr.reduce((s,v) => s + (v.storage_committed_gb || 0), 0),
+    prov: arr.reduce((s,v) => s + diskCapGb(v), 0),
+  };
+}
+function updateSummary(on, off) {
+  const t = sumRes([...on, ...off]), o = sumRes(on), x = sumRes(off);
+  const s = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  s('rs-t-vms', t.vms); s('rs-o-vms', o.vms); s('rs-x-vms', x.vms);
+  s('rs-t-cpu', t.cpu); s('rs-o-cpu', o.cpu); s('rs-x-cpu', x.cpu);
+  s('rs-t-ram',  fmtGB(t.ram));  s('rs-o-ram',  fmtGB(o.ram));  s('rs-x-ram',  fmtGB(x.ram));
+  s('rs-t-stor', fmtGB(t.stor)); s('rs-o-stor', fmtGB(o.stor)); s('rs-x-stor', fmtGB(x.stor));
+  s('rs-t-prov', fmtGB(t.prov)); s('rs-o-prov', fmtGB(o.prov)); s('rs-x-prov', fmtGB(x.prov));
+}
+
+// ── Sort state ─────────────────────────────────────────────────────────
+let _sortCol = null, _sortDir = 1;
+function vmSortVal(v, col) {
+  switch(col) {
+    case 'name':         return (v.name || '').toLowerCase();
+    case 'sap_number':   return (v.sap_number || '');
+    case 'customer':     return (_customerMap[v.sap_number] || '').toLowerCase();
+    case 'cluster':      return (v.cluster || '').toLowerCase();
+    case 'num_cpu':      return v.num_cpu || 0;
+    case 'memory_gb':    return v.memory_gb || 0;
+    case 'storage_used': return v.storage_committed_gb || 0;
+    case 'storage_prov': return diskCapGb(v);
+    case 'guest_used': return v.guest_disk_used_gb != null ? v.guest_disk_used_gb : -1;
+    case 'guest_os':     return (v.guest_os || '').toLowerCase();
+    case 'ip_address':   return (v.ip_address || '');
+    case 'host':         return (v.host || '').toLowerCase();
+    case 'net_status':   return v.nic_connected > 0 ? 1 : 0;
+    case 'nic_count':    return v.nic_connected || 0;
+    case 'domain':       return _getDomain(v.hostname).toLowerCase();
+    default: return '';
+  }
+}
+function sortBy(col) {
+  if (_sortCol === col) _sortDir *= -1; else { _sortCol = col; _sortDir = 1; }
+  document.querySelectorAll('th[data-col]').forEach(th => {
+    const arrow = th.querySelector('.sort-arrow');
+    if (th.dataset.col === _sortCol) { th.classList.add('sort-active'); arrow.textContent = _sortDir === 1 ? '↑' : '↓'; }
+    else { th.classList.remove('sort-active'); arrow.textContent = '↕'; }
+  });
+  if (_allVMs.length) renderTables(_allVMs);
+}
+
+function getFilteredVMs(vms, applySort) {
+  const q    = (document.getElementById('vm-search')?.value || '').trim().toLowerCase();
+  const cf   = document.getElementById('cluster-filter').value;
+  const df   = document.getElementById('dr-filter')?.value || '';
+  const domf = document.getElementById('domain-filter')?.value || '';
+  let filtered = vms;
+  if (cf)   filtered = filtered.filter(v => v.cluster === cf);
+  if (df === 'exclude') filtered = filtered.filter(v => !isDrVM(v));
+  if (df === 'only')    filtered = filtered.filter(v => isDrVM(v));
+  if (domf) filtered = filtered.filter(v => _getDomain(v.hostname) === domf);
+  if (q)    filtered = filtered.filter(v =>
+    (v.name || '').toLowerCase().includes(q) ||
+    (v.sap_number || '').toLowerCase().includes(q) ||
+    (v.ip_address || '').includes(q) ||
+    (_customerMap[v.sap_number] || '').toLowerCase().includes(q) ||
+    _getDomain(v.hostname).toLowerCase().includes(q)
+  );
+  if (applySort && _sortCol) filtered = [...filtered].sort((a, b) => {
+    const av = vmSortVal(a, _sortCol), bv = vmSortVal(b, _sortCol);
+    return av < bv ? -_sortDir : av > bv ? _sortDir : 0;
+  });
+  return filtered;
+}
+
+// ── Render VM tables ───────────────────────────────────────────────────
+function renderTables(vms) {
+  const filtered = getFilteredVMs(vms, true);
+  const on  = filtered.filter(v => v.power_state === 'poweredOn');
+  const off = filtered.filter(v => v.power_state !== 'poweredOn');
+  updateSummary(on, off);
+  document.getElementById('tbody-on').innerHTML  = on.length  ? on.map(vmRow).join('')  : '<tr class="loading-row"><td colspan="99">אין VMs פועלות</td></tr>';
+  document.getElementById('tbody-off').innerHTML = off.length ? off.map(vmRow).join('') : '<tr class="loading-row"><td colspan="99">אין VMs כבויות</td></tr>';
+  document.getElementById('on-count').textContent  = on.length;
+  document.getElementById('off-count').textContent = off.length;
+  const total = filtered.length;
+  document.getElementById('filter-count').textContent = total !== vms.length ? `מציג ${total} מתוך ${vms.length}` : '';
+}
+
+// ── Combined filter ────────────────────────────────────────────────────
+function filterHosts() {
+  if (_allHosts.length) renderHosts(_allHosts);
+}
+function filterVMs() {
+  if (_allVMs.length) renderTables(_allVMs);
+}
+
+// ── Populate cluster dropdowns ──────────────────────────────────────────
+function populateClusters(clusters) {
+  const makeOptions = () => '<option value="">כל ה-Clusters</option>' +
+    clusters.map(c => `<option value="${c}">${c}</option>`).join('');
+  document.getElementById('cluster-filter').innerHTML      = makeOptions();
+  document.getElementById('host-cluster-filter').innerHTML = makeOptions();
+}
+function populateDomains(vms) {
+  const sel = document.getElementById('domain-filter');
+  if (!sel) return;
+  const cur = sel.value;
+  const domains = [...new Set(vms.map(v => _getDomain(v.hostname)))].sort();
+  sel.innerHTML = '<option value="">כל הדומיינים</option>' +
+    domains.map(d => `<option value="${window.escapeHtml(d)}"${d===cur?' selected':''}>${window.escapeHtml(d)}</option>`).join('');
+}
+
+// ── Excel export ───────────────────────────────────────────────────────
+// Optional columns exported only when selected via the column picker (_colVis), same set/order as the table.
+var _excelColDefs = [
+  { key: 'net_status',     label: 'מצב רשת',                        width: 16, get: v => (v.nic_connected||0) > 0 ? 'מחובר' : 'לא מחובר' },
+  { key: 'nic_count',      label: 'כרטיסי רשת (מחוברים/סה"כ)',       width: 16, get: v => `${v.nic_connected||0}/${v.nic_total||0}` },
+  { key: 'hostname',       label: 'DNS Name',                       width: 30, get: v => v.hostname || '' },
+  { key: 'vmtools_status', label: 'VMtools סטטוס',                  width: 22, get: v => v.vmtools_status || '' },
+  { key: 'hw_version',     label: 'HW Version',                     width: 18, get: v => v.hw_version || '' },
+  { key: 'is_thin',        label: 'Thin/Thick',                     width: 12, get: v => (v.is_thin === undefined || v.is_thin === null) ? '' : (v.is_thin ? 'Thin' : 'Thick') },
+  { key: 'time_sync',      label: 'סנכרון שעון',                    width: 14, get: v => (v.time_sync_with_host === undefined || v.time_sync_with_host === null) ? '' : (v.time_sync_with_host ? 'מהמארח' : 'עצמאי') },
+  { key: 'port_group',     label: 'Port Group',                     width: 30, get: v => (v.port_groups && v.port_groups.length) ? v.port_groups.join(' | ') : '' },
+  { key: 'vlan_id',        label: 'VLAN ID',                        width: 14, get: v => (v.vlan_ids && v.vlan_ids.length) ? v.vlan_ids.filter(x => x !== null && x !== undefined && x !== '').join(' | ') : '' },
+  { key: 'net_type',       label: 'סוג רשת',                        width: 24, get: v => _excelNetType(v.vlan_ids) },
+  { key: 'domain',         label: 'דומיין',                         width: 22, get: v => _getDomain(v.hostname) },
+  { key: 'datastore',      label: 'Datastore',                      width: 26, get: v => (v.datastores && v.datastores.length) ? v.datastores.join(' | ') : '' },
+];
+function _excelNetType(vlan_ids) {
+  if (!vlan_ids || !vlan_ids.length) return '';
+  var names = [];
+  vlan_ids.forEach(function(v) { var n = _VLAN_NET_NAMES[v]; if (n && names.indexOf(n) === -1) names.push(n); });
+  return names.join(' | ');
+}
+
+function vmToExcelRow(v) {
+  var row = {
+    'שם VM':               v.name,
+    'תפקיד השרת':          _vmNotes[v.name] || '',
+    'איפיון':              _vmClass[v.name] || '',
+    'מס. פריוריטי':          v.sap_number || '',
+    'שם לקוח':             (v.sap_number && _customerMap[v.sap_number]) || '',
+    'Cluster':             v.cluster,
+    'סטטוס':               v.power_state === 'poweredOn' ? 'On' : v.power_state === 'suspended' ? 'Suspended' : 'Off',
+    'DR':                  isDrVM(v) ? 'Yes' : 'No',
+    'vCPU':                v.num_cpu,
+    'RAM (GB)':            v.memory_gb,
+    'Storage בשימוש (GB)': v.storage_committed_gb,
+    'Storage מוקצה (GB)':  Math.round(diskCapGb(v) * 10) / 10,
+    'שימוש בתוך ה-OS (GB)': v.guest_disk_used_gb != null ? v.guest_disk_used_gb : (v.power_state !== 'poweredOn' ? 'כבוי' : (v.vmtools_status === 'toolsNotInstalled' ? 'אין VMtools' : (v.vmtools_status === 'toolsNotRunning' ? 'VMtools לא רץ' : 'אין נתון'))),
+    'Guest OS':            v.guest_os_detail || v.guest_os || '',
+    'OS מאומת':            v.guest_os_confirmed === false ? 'לא' : 'כן',
+    'IP Address':          v.ip_address || '',
+    'ESXi Host':           v.host || '',
+  };
+  _excelColDefs.forEach(function(c) { if (_colVis[c.key]) row[c.label] = c.get(v); });
+  return row;
+}
+
+function writeVmWorkbook(rows, sheetName, filename) {
+  const baseWidths = [40,26,30,14,30,18,10,8,8,10,20,20,36,10,12,20];
+  const optWidths = _excelColDefs.filter(c => _colVis[c.key]).map(c => c.width);
+  const ws = XLSX.utils.json_to_sheet(rows.map(vmToExcelRow));
+  ws['!cols'] = baseWidths.concat(optWidths).map(w => ({wch: w}));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  XLSX.writeFile(wb, filename);
+}
+
+function exportToExcel(mode) {
+  const q  = (document.getElementById('vm-search')?.value || '').trim().toLowerCase();
+  const cf = document.getElementById('cluster-filter').value;
+  const df = document.getElementById('dr-filter')?.value || '';
+  const source = mode === 'filtered' ? getFilteredVMs(_allVMs, true) : _allVMs;
+  const label = mode === 'filtered' && (q || cf || df) ? 'filtered' : 'all';
+  const now = new Date().toISOString().slice(0,10);
+  writeVmWorkbook(source, 'VMs', `vcenter_${VC_LABEL}_vms_${label}${df ? '_dr-' + df : ''}_${now}.xlsx`);
+}
+
+function exportPoweredOffToExcel() {
+  const q  = (document.getElementById('vm-search')?.value || '').trim();
+  const cf = document.getElementById('cluster-filter').value;
+  const df = document.getElementById('dr-filter')?.value || '';
+  const source = getFilteredVMs(_allVMs, true).filter(v => v.power_state !== 'poweredOn');
+  const label = (q || cf || df) ? 'filtered' : 'all';
+  const now = new Date().toISOString().slice(0,10);
+  writeVmWorkbook(source, 'Powered Off VMs', `vcenter_${VC_LABEL}_powered_off_${label}${df ? '_dr-' + df : ''}_${now}.xlsx`);
+}
+
+// ── Excel export – Hosts ───────────────────────────────────────────────
+function exportHostsToExcel(mode) {
+  const cf = document.getElementById('host-cluster-filter').value;
+  let source = _allHosts;
+  if (mode === 'filtered' && cf) source = source.filter(h => h.cluster === cf);
+  const rows = source.map(h => ({
+    'מארח':           h.name,
+    'Cluster':        h.cluster,
+    'מודל':           h.model,
+    'Vendor':         h.vendor,
+    'CPU Cores':      h.cpu_cores,
+    'CPU Pkgs':       h.cpu_pkgs,
+    'CPU Total (MHz)':h.cpu_total_mhz,
+    'CPU Usage (MHz)':h.cpu_usage_mhz,
+    'CPU %':          h.cpu_pct,
+    'RAM Total (GB)': h.mem_total_gb,
+    'RAM Usage (GB)': h.mem_usage_gb,
+    'RAM %':          h.mem_pct,
+    'Status':         h.status,
+    'Connection':     h.connection,
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws['!cols'] = [30,18,20,22,10,10,16,16,8,14,14,8,10,12].map(w => ({wch: w}));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Hosts');
+  const label = mode === 'filtered' && cf ? 'filtered' : 'all';
+  const now = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, `vcenter_${VC_LABEL}_hosts_${label}_${now}.xlsx`);
+}
+
+// ── Main load ──────────────────────────────────────────────────────────
+async function loadAll(forceRefresh = false) {
+  document.getElementById('vc-status').textContent = '⏳ טוען...';
+  ['kpi-total','kpi-on','kpi-off','kpi-sus','kpi-cpu','kpi-ram','kpi-stor','kpi-hosts','kpi-ds-risk'].forEach(id => {
+    document.getElementById(id).textContent = '–';
+  });
+  document.getElementById('tbody-on').innerHTML    = '<tr class="loading-row"><td colspan="99">⏳ טוען...</td></tr>';
+  document.getElementById('tbody-off').innerHTML   = '<tr class="loading-row"><td colspan="99">⏳ טוען...</td></tr>';
+  document.getElementById('tbody-hosts').innerHTML = '<tr class="loading-row"><td colspan="10">⏳ טוען...</td></tr>';
+
+  try {
+    try { const r = await fetch('/api/customers/map'); if (r.ok) _customerMap = await r.json(); } catch(e) {}
+    try { _vmNotes = await apiFetch('/vm-notes'); } catch(e) { _vmNotes = {}; }
+    try { _vmClass = await apiFetch('/vm-classification'); } catch(e) { _vmClass = {}; }
+
+    const ping = await apiFetch('/ping');
+    document.getElementById('vc-version').textContent = `v${ping.version || '?'}`;
+    document.getElementById('vc-host').textContent    = ping.host || 'TC-vCenter';
+    if (ping.host) document.getElementById('vc-host').href = 'https://' + ping.host + '/ui';
+    document.getElementById('vc-status').textContent  = '✓ מחובר';
+
+    const data = await apiFetch('/summary' + (forceRefresh ? '?refresh=true' : ''));
+    _allVMs   = data.vms   || [];
+    _allHosts = data.hosts || [];
+    _allDatastores    = data.datastores     || [];
+    _allAffinityRules = data.affinity_rules || [];
+
+    // KPIs
+    document.getElementById('kpi-total').textContent = data.total_vms;
+    document.getElementById('kpi-on').textContent    = data.powered_on;
+    document.getElementById('kpi-off').textContent   = data.powered_off;
+    document.getElementById('kpi-sus').textContent   = data.suspended;
+    document.getElementById('kpi-cpu').textContent   = data.active_vcpu;
+    document.getElementById('kpi-ram').textContent   = data.active_ram_gb;
+    document.getElementById('kpi-stor').textContent  = data.total_storage_gb;
+    document.getElementById('kpi-hosts').textContent = _allHosts.length;
+
+    populateClusters(data.clusters || []);
+    populateDomains(_allVMs);
+    renderHosts(_allHosts);
+    renderTables(_allVMs);
+    renderDatastores(_allDatastores);
+    renderAffinityRules(_allAffinityRules);
+
+    // Cache status
+    try {
+      const cs = await apiFetch('/cache-status');
+      if (cs.cached && !forceRefresh)
+        document.getElementById('vc-status').textContent = `✓ מחובר (cache ${cs.age_seconds}s)`;
+    } catch(e) {}
+
+  } catch (err) {
+    document.getElementById('vc-status').textContent = '✗ שגיאה';
+    document.getElementById('tbody-on').innerHTML    = `<tr class="loading-row"><td colspan="99" style="color:#f85149">שגיאה: ${window.escapeHtml(err.message)}</td></tr>`;
+    document.getElementById('tbody-off').innerHTML   = '<tr class="loading-row"><td colspan="99">—</td></tr>';
+    document.getElementById('tbody-hosts').innerHTML = '<tr class="loading-row"><td colspan="10">—</td></tr>';
+  }
+}
+
+// ── Column picker ──────────────────────────────────────────────────────────
+function toggleColPanel(e) {
+  if (e) e.stopPropagation();
+  var p = document.getElementById('col-panel');
+  if (!p) return;
+  if (p.style.display !== 'none') { p.style.display = 'none'; return; }
+  p.innerHTML = [
+    {key:'net_status',     label:'\u05DE\u05E6\u05D1 \u05E8\u05E9\u05EA'},
+    {key:'nic_count',      label:'\u05DB\u05E8\u05D8\u05D9\u05E1\u05D9 \u05E8\u05E9\u05EA'},
+    {key:'hostname',       label:'DNS Name'},
+    {key:'vmtools_status', label:'VMtools \u05E1\u05D8\u05D8\u05D5\u05E1'},
+    {key:'hw_version',     label:'HW Version'},
+    {key:'is_thin',        label:'Thin/Thick'},
+    {key:'time_sync',      label:'\u05E9\u05E2\u05D5\u05DF \u05DE\u05D4\u05DE\u05D0\u05E8\u05D7'},
+    {key:'port_group',     label:'Port Group'},
+    {key:'vlan_id',        label:'VLAN ID'},
+    {key:'net_type',       label:'\u05E1\u05D5\u05D2 \u05E8\u05E9\u05EA'},
+    {key:'domain',         label:'\u05D3\u05D5\u05DE\u05D9\u05D9\u05DF'},
+    {key:'datastore',      label:'Datastore / Volume'},
+  ].map(function(c) {
+    return '<label style="display:flex;align-items:center;gap:7px;padding:4px 0;cursor:pointer;font-size:0.82rem">' +
+      '<input type="checkbox"' + (_colVis[c.key] ? ' checked' : '') +
+      ' onchange="setOptCol(\'' + c.key + '\',this.checked)"> ' + c.label + '</label>';
+  }).join('') +
+  '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:0.7rem;color:var(--muted)">\u05E0\u05E9\u05DE\u05E8 \u05D0\u05D5\u05D8\u05D5\u05DE\u05D8\u05D9\u05EA \u05DC\u05D3\u05E4\u05D3\u05E4\u05DF</div>';
+  p.style.display = 'block';
+}
+
+var _optColClsMap = {net_status:'col-net_status', nic_count:'col-nic_count', hostname:'col-hostname', vmtools_status:'col-vmtools_status', hw_version:'col-hw_version', is_thin:'col-is_thin', time_sync:'col-time_sync', port_group:'col-port_group', vlan_id:'col-vlan_id', net_type:'col-net_type', domain:'col-domain', datastore:'col-datastore'};
+var _optColDefaults = {net_status:true, nic_count:true, datastore:true};
+
+function setOptCol(key, on) {
+  _colVis[key] = on;
+  try { localStorage.setItem('vc-col-' + VC_LABEL, JSON.stringify(_colVis)); } catch(e) {}
+  if (_optColClsMap[key]) document.querySelectorAll('.' + _optColClsMap[key]).forEach(function(el) {
+    el.classList.toggle('col-opt-hide', !on);
+  });
+  if (_allVMs.length) renderTables(_allVMs);
+}
+
+(function initColVis() {
+  try {
+    var sv = JSON.parse(localStorage.getItem('vc-col-' + VC_LABEL) || '{}');
+    Object.keys(_optColClsMap).forEach(function(k) { _colVis[k] = (k in sv) ? !!sv[k] : !!_optColDefaults[k]; });
+  } catch(e) {}
+  Object.keys(_optColClsMap).forEach(function(k) {
+    if (!_colVis[k]) return;
+    document.querySelectorAll('.' + _optColClsMap[k]).forEach(function(el) { el.classList.remove('col-opt-hide'); });
+  });
+})();
+
+document.addEventListener('click', function() {
+  var p = document.getElementById('col-panel');
+  if (p) p.style.display = 'none';
+});
+
+loadAll();
+</script>
+</body>
+</html>
+

@@ -2,41 +2,112 @@
 
 ## תיאור הפרויקט
 
-דשבורד ניטור רב-סביבתי לצי שרתי Cisco UCS Manager. מספק תמונת מצב חומרה מלאה בזמן אמת על פני מספר חוות שרתים, עם יכולות ייצוא, ניהול ידני והשוואה בין סביבות.
+דשבורד ניטור רב-סביבתי המכסה ארבעה תחומים:
+1. **Cisco UCS** — ניטור חומרה (Blades, FI, PSU, Firmware) בשלוש חוות שרתים
+2. **Infinidat** — ניטור אחסון (קיבולת, Snapshots, Replicas, ביצועים) בשלושה iBoxes
+3. **VMware vCenter** — ניטור מכונות וירטואליות (VMs, Hosts, Clusters) בארבעה vCenters
+4. **Veeam Backup** — ניטור גיבויים (Jobs, Repositories, Sessions) מחמישה שרתי Veeam (EM, PT, Fattal, TC, Lifesaver)
+
+כולל **ניהול לקוחות** (Priority/SAP → שם לקוח) המשויך לכל VM,
+**מעקב שינויים והיסטוריה** של מלאי ה-VMs (כולל צילומי מצב, השוואת גרסאות, גיבוי יומי אוטומטי
+מלא — VMs+Hosts+Clusters+Datastores — וגיבוי חודשי אוטומטי מוגן במחיקה), דוח **תאריכי יצירת
+VMs**, **DR Dashboard** לפי לקוח, **חיוב לפי גדילת משאבים** מעל % פטור שמוגדר לכל לקוח,
+ו**עוזר AI** מבוסס שרת Ollama פנימי. הגיבוי היומי משמש גם לגישת **קריאה-בלבד לדשבורד חיצוני**
+(ראו [`EXTERNAL_DASHBOARD_ACCESS.md`](EXTERNAL_DASHBOARD_ACCESS.md)).
+
+כל הדשבורד נמצא **מאחורי אימות מלא** — Microsoft Entra ID SSO (עם allow-list הרשאות) או
+כניסה עם שם משתמש/סיסמה (AD דרך LDAP, מוגבלת ל-IPs מקומיים בלבד).
+
+> לפירוט מלא ועדכני של כל מודול, endpoint, טבלת DB ומשתני סביבה — ראו [`PROJECT_STATUS.md`](PROJECT_STATUS.md),
+> שהוא המסמך החי המתעדכן בכל שינוי. מסמך זה הוא סקירה ארכיטקטונית כללית.
 
 ---
 
 ## ארכיטקטורה
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Browser (HTML/JS)                        │
-│   TC-FARM │ PT-FARM │ FATTAL │ Compare │ Devices                │
-└──────────────────────┬──────────────────────────────────────────┘
-                       │ HTTP (port 9000)
-┌──────────────────────▼──────────────────────────────────────────┐
-│                   FastAPI Backend (Python)                        │
-│   /api/tc/...  │  /api/pt/...  │  /api/fattal/...               │
-│   /api/devices  (global device registry)                         │
-└────────────────┬────────────────────────┬───────────────────────┘
-                 │                        │
-    ┌────────────▼───────────┐   ┌────────▼───────────┐
-    │  Cisco UCS Manager     │   │  SQLite DB          │
-    │  XML API (/nuova)      │   │  dashboard.db       │
-    │  SSL / self-signed OK  │   │  manual_data table  │
-    └────────────────────────┘   │  devices table      │
-                                 └────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          Browser (HTML/JS)                                    │
+│  UCS │ Compare │ Infinidat │ vCenter │ History │ VM-Create │ Backup │ DR      │
+│  Login │ Permissions │ Admin Overview                                        │
+│  auth.js (session sync + CSRF) │ sidebar.js (ניווט + theme + AI widget)      │
+└──────────────────────────────┬───────────────────────────────────────────────┘
+                               │ HTTPS (port 9000) + עוגיית auth_token + csrf_token
+┌──────────────────────────────▼───────────────────────────────────────────────┐
+│  _AuthMiddleware → _CSRFMiddleware → _SecurityHeaders → CORS                 │
+│  /api/* ללא JWT ⇒ 401   │   דף ללא JWT ⇒ 302 /login                          │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                      FastAPI Backend (Python 3.14)                            │
+│  /api/auth/*  /api/authz/*          (Entra SSO + AD/local + allow-list)      │
+│  /api/tc /api/pt /api/fattal        (UCS)                                    │
+│  /api/ibox/{id}                     (Infinidat)                              │
+│  /api/vcenter/{env}                 (vCenter)                                │
+│  /api/vcenter/events  /history      (Change Tracking + Snapshots + VM-Create)│
+│  /api/backup/em                     (Veeam EM — session auth, port 9398)     │
+│  /api/backup/{pt|fattal|tc|lifesaver} (Veeam B&R — OAuth2, port 9419)        │
+│  /api/customers /api/devices /api/dr /api/ai/chat                            │
+│  ⟳ thread רקע: vc-events-poll (30 יום ראשוני, ואז כל שעתיים)                 │
+└──┬─────────┬─────────┬──────────┬──────────────┬────────────────────────────┘
+   │         │         │          │              │
+┌──▼─────┐ ┌─▼───────┐ ┌▼────────────┐ ┌────────▼──────────┐ ┌──────────────┐
+│Cisco   │ │Infinidat│ │VMware vCenter│ │      Veeam         │ │Entra ID /    │
+│UCS XML │ │REST API │ │pyVmomi/SOAP  │ │ EM: session auth   │ │AD (LDAP) /   │
+└────────┘ └─────────┘ └─────────────┘ │ B&R: OAuth2 Bearer │ │Ollama (AI)   │
+   │                                    └────────────────────┘ └──────────────┘
+┌──▼─────────────────────────────────────────────────────────────────────────┐
+│                       SQLite — dashboard.db                                 │
+│  manual_data │ devices │ customers │ vm_notes │ vm_sap_cache               │
+│  ibox_capacity_history │ vcenter_events                                    │
+│  auth_settings │ authz_users │ vm_snapshots │ vm_snapshot_items            │
+│  customer_billing_config │ vm_snapshot_env_data                            │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## סביבות מוניטור (Farms)
+## סביבות מוניטור
+
+### UCS Farms
 
 | Farm | Host | API Prefix | URL |
-|------|------|-----------|-----|
-| TC-FARM | 10.10.140.100 | `/api/tc` | `http://server:9000/` |
-| PT-FARM | 10.20.140.100 | `/api/pt` | `http://server:9000/pt` |
-| FATTAL  | 10.8.0.160    | `/api/fattal` | `http://server:9000/fattal` |
+|------|------|------------|-----|
+| TC-FARM | 10.10.140.100 | `/api/tc` | `/` |
+| PT-FARM | 10.20.140.100 | `/api/pt` | `/pt` |
+| FATTAL  | 10.8.0.160    | `/api/fattal` | `/fattal` |
+
+### Infinidat iBoxes
+
+| Label | Host | גרסה | API Prefix | URL |
+|-------|------|------|------------|-----|
+| TC iBox-03 | `ibox-tc-03.allegronet.co.il` | 8.1.x | `/api/ibox/tc03` | `/infinidat/tc` |
+| Old-Infinidat-TC | `10.10.15.10` | 7.3.x | `/api/ibox/tc-old` | `/infinidat/tc-old` |
+| Infinidat-PT | `10.10.25.200` | 7.3.x | `/api/ibox/pt` | `/infinidat/pt` |
+
+### VMware vCenters
+
+| Label | Host | URL |
+|-------|------|-----|
+| TC-vCenter | `al-vcenter6.allegronet.co.il` | `/vcenter/tc` |
+| TC-vCenter8 | `vcenter-tc.allegronet.co.il` (10.10.15.70) | `/vcenter/tc8` |
+| PT-vCenter | `vc-pt.allegronet.co.il` | `/vcenter/pt` |
+| Fattal-vCenter | `vcenter6.fattal.co.il` | `/vcenter/fattal` |
+| Overview | כל הסביבות | `/vcenter/overview` |
+| Change Tracking | אירועי שינוי VMs | `/vcenter/changes` |
+| History | צילומי מצב + השוואת גרסאות | `/vcenter/history` |
+| VM Create | דוח תאריכי יצירת VMs | `/vcenter/vm-create` |
+
+### Veeam Backup Servers
+
+| Label | Host | פורט | Auth | URL |
+|-------|------|------|------|-----|
+| Backup EM | `al-veeambem.allegronet.co.il` | 9398 | Session (`X-RestSvcSessionId`) | `/backup` |
+| PT Backup | `al-veeampt.allegronet.co.il` | 9419 | OAuth2 Bearer | `/backup/pt` |
+| Fattal Backup | `ft-vbck.fattal.co.il` | 9419 | OAuth2 Bearer | `/backup/fattal` |
+| TC Backup | `al-veeamcc.allegronet.co.il` | 9419 | OAuth2 Bearer | `/backup/tc` |
+| Lifesaver Backup | `al-lifesaver.allegronet.co.il` | 9419 | OAuth2 Bearer | `/backup/lifesaver` |
+
+> **משתמש:** `al-lifesaver\VeeamRO`
+> **סיסמאות:** שמורות ב-`backend/.env` (נעול: BUILTIN\Administrators בלבד)
 
 ---
 
@@ -45,140 +116,112 @@
 ```
 DsahBoard-UCS-Test/
 ├── backend/
-│   ├── app.py              # FastAPI – router factory + endpoints
-│   ├── ucs_client.py       # Cisco UCS XML API client
-│   ├── database.py         # SQLite layer (manual_data + devices)
-│   ├── dashboard.db        # SQLite database (נוצר אוטומטית)
-│   └── .env                # Credentials (לא ב-git)
+│   ├── app.py                  # FastAPI – כל ה-routes + routers
+│   ├── database.py             # SQLite helpers
+│   ├── ucs_client.py           # Cisco UCS XML API client
+│   ├── infinidat_client.py     # Infinidat REST API client
+│   ├── vcenter_client.py       # VMware vCenter client (pyVmomi)
+│   ├── perf_collector.py       # דגימת CPU/RAM/CPU-Ready לכל VM כל דקה (thread רקע)
+│   ├── perf_store.py           # roll-up שעתי/יומי ב-SQLite + שאילתות סיכום
+│   ├── perf_rightsizing.py     # המלצות right-sizing מנתוני הביצועים
+│   ├── veeam_client.py         # Veeam EM client (session auth, port 9398)
+│   ├── veeam_br_client.py      # Veeam B&R client (OAuth2, port 9419)
+│   ├── auth.py                 # JWT (HS256) + bcrypt + אימות AD דרך LDAP
+│   ├── ollama_client.py        # לקוח שרת Ollama הפנימי (עוזר AI)
+│   ├── .env                    # Credentials — נעול ל-Administrators בלבד
+│   └── dashboard.db            # SQLite (לא ב-git)
 ├── frontend/
-│   ├── index.html          # TC-FARM dashboard
-│   ├── pt.html             # PT-FARM dashboard
-│   ├── fattal.html         # FATTAL dashboard
-│   ├── compare.html        # השוואה בין Farms
-│   ├── devices.html        # ניהול התקנים (Device Registry)
-│   ├── app.js              # כל לוגיקת ה-JavaScript
-│   └── style.css           # עיצוב (dark theme)
-├── logs/                   # לוגים של השרת (נוצר ע"י Service)
-├── tools/nssm/             # NSSM binary (נוצר ע"י install_service.ps1)
-├── start_server.vbs        # הפעלה ידנית בלי חלון שחור
-├── stop_server.ps1         # עצירת השרת
-├── install_service.ps1     # התקנת Windows Service (24/7)
-└── OVERVIEW.md             # מסמך זה
+│   ├── index.html / pt.html / fattal.html   # UCS farms
+│   ├── compare.html            # השוואת Farms
+│   ├── devices.html            # Device Registry
+│   ├── customers.html          # ניהול לקוחות
+│   ├── dr.html                 # DR Dashboard
+│   ├── backup*.html            # Veeam: EM, PT, Fattal, TC, Lifesaver
+│   ├── infinidat_*.html        # Infinidat: TC, TC-old, PT
+│   ├── vcenter_*.html          # vCenter: TC, TC8, PT, Fattal, Overview,
+│   │                           #   Cluster-Detail, Changes, History, VM-Create,
+│   │                           #   Perf (CPU/RAM/CPU Ready), Rightsizing
+│   ├── login.html              # דף התחברות (סיסמה מקומית / Entra SSO)
+│   ├── permissions.html        # ניהול allow-list הרשאות
+│   ├── billing_config.html     # הגדרות חיוב לקוחות (% פטור + מחירי משאבים, חדש 4.9)
+│   ├── admin_overview.html     # Executive Summary + פאנל SSO/SSL (#sso)
+│   ├── sidebar.js              # Sidebar דינמי + Light/Dark toggle + AI widget
+│   ├── auth.js                 # סנכרון session, CSRF helper, logout
+│   ├── infinidat.js / app.js / lang.js
+│   ├── xlsx.full.min.js        # SheetJS, vendored locally — קריאה בלבד, לא כותב עיצוב
+│   ├── exceljs.min.js          # ExcelJS, vendored locally — ליצוא Excel מעוצב (חדש 4.8)
+│   └── style.css               # Global theme (dark + light mode)
+├── scripts/                    # סקריפטי הפעלה/תיקון/אבחון (write_sidebar.py,
+│                                #   setup_*_pass.ps1, patch_*.py, diag_*.py, test_veeam*.py וכו')
+├── Customers/                  # קובצי מקור ליבוא לקוחות (Excel)
+├── logos/, logs/, Cert/, tools/, Danny/
+├── install_service.ps1         # התקנת שירות NSSM
+├── stop_server.ps1 / start_server.vbs
+├── OVERVIEW.md
+└── PROJECT_STATUS.md
 ```
+
+> **הערה:** תיקיית השורש מכילה גם עשרות סקריפטי `deploy_*`/`fix_*`/קבצי `*_done.txt`/`*.log`
+> שהצטברו מסבבי פיתוח איטרטיביים (patches חד-פעמיים שהוחלו על production ולא נוקו).
+> הלוגיקה החיה היא אך ורק ב-`backend/` וב-`frontend/`.
 
 ---
 
-## API Endpoints
+## API Endpoints — עיקריים
 
-### Per-Farm (דוגמה עם `/api/tc`)
+| קבוצה | Prefix | תיאור |
+|--------|--------|--------|
+| UCS | `/api/{tc\|pt\|fattal}` | `ping`, `summary`, `blades/enriched`, `hardware-summary`, `firmware`, `power-stats`, `network-adapters` |
+| Infinidat | `/api/ibox/{id}` | `ping`, `summary`, `volumes`, `snapshots`, `replicas`, `replicas/detailed`, `top-volumes`, `performance`, `hardware` |
+| vCenter | `/api/vcenter/{env}` | `ping`, `summary` (cache 180s) |
+| vCenter Events | `/api/vcenter/events` | `poll` (admin), `export` |
+| vCenter Performance | `/api/vcenter/perf` | `?range=24h\|7d\|30d\|90d\|180d&env=` (סיכום לכל VM כולל CPU Ready), `perf/vm` (סדרה לגרף), `perf/backups` (זמני גיבוי של VM מ-Veeam B&R לסימון בגרף), `perf/rightsizing`, `perf/status` |
+| vCenter History | `/api/vcenter/history` | `snapshot` (POST, admin), `snapshots`, `snapshot/{id}`, DELETE `snapshot/{id}` |
+| Veeam EM | `/api/backup/em` | `ping`, `summary` (session auth, cache 5min) |
+| Veeam B&R | `/api/backup/{pt\|fattal\|tc\|lifesaver}` | `ping`, `summary` (OAuth2, cache 5min) |
+| Customers | `/api/customers` | GET/POST/PUT/DELETE, `map`, `import` (Excel) |
+| Devices | `/api/devices` | GET/POST/PUT/DELETE |
+| Auth | `/api/auth/*` | `login`, `logout`, `session`, `login-options`, `microsoft/start`, `microsoft/callback`, `microsoft/config` |
+| Authorization | `/api/authz/users` | GET/PUT allow-list, DELETE identity |
+| AI | `/api/ai/chat` | צ'אט מול Ollama עם קונטקסט עמוד + היסטוריה |
+| Health | `/health` | בדיקת חיות |
 
-| Method | Path | תיאור |
-|--------|------|--------|
-| GET | `/api/tc/ping` | בדיקת חיבור |
-| GET | `/api/tc/summary` | סיכום כולל (KPI, FI, Blades, Faults) |
-| GET | `/api/tc/blades/enriched` | Blades עם CPU/Memory/Storage/RAID |
-| GET | `/api/tc/hardware-summary` | CPU/Memory/PSU/Fan/IPs tables |
-| GET | `/api/tc/firmware` | גרסאות BIOS + CIMC + Adapter |
-| GET | `/api/tc/power-stats` | צריכת חשמל per chassis |
-| GET | `/api/tc/network-adapters` | VIC adapters + vNIC MAC + vHBA WWPN |
-| GET | `/api/tc/pools` | UUID/IP/MAC/WWPN pool availability |
-| GET | `/api/tc/faults` | Active faults |
-| GET | `/api/tc/manual-data` | נתוני שיוך/ארון/vCenter מה-DB |
-| PUT | `/api/tc/manual-data` | שמירת נתונים ידניים |
-
-### Global
-
-| Method | Path | תיאור |
-|--------|------|--------|
-| GET | `/api/devices` | רשימת כל ההתקנים |
-| POST | `/api/devices` | הוספת התקן |
-| PUT | `/api/devices/{id}` | עדכון התקן |
-| DELETE | `/api/devices/{id}` | מחיקת התקן |
+> פירוט מלא של כל route, method, auth requirement וטבלת DB — ב-`PROJECT_STATUS.md`.
 
 ---
 
-## מסד הנתונים (SQLite)
+## מסד הנתונים — טבלאות עיקריות
 
-### manual_data
-| עמודה | סוג | תיאור |
-|-------|-----|--------|
-| farm | TEXT | מזהה הסביבה: tc / pt / fattal |
-| server_key | TEXT | מזהה השרת (serverId: chassis/blade) |
-| assignment | TEXT | שיוך (VM, שירות, צוות) |
-| cabinet | TEXT | ארון / מיקום פיזי |
-| vcenter | TEXT | שם vCenter |
-| notes | TEXT | הערות חופשיות |
-| updated_at | TEXT | תאריך עדכון אחרון |
+| טבלה | תיאור |
+|-------|--------|
+| `customers` | ~548 לקוחות, `sap_number` → `customer_name` |
+| `devices` | Device Registry (UCS/other infra) |
+| `manual_data` | metadata ידני ל-UCS (cabinet, assignment, vcenter, notes) |
+| `ibox_capacity_history` | טרנד קיבולת Infinidat לאורך זמן |
+| `vm_notes` | תפקיד שרת + איפיון (classification) per VM |
+| `vcenter_events` | Change Tracking — לוג אירועי VM (append-only) |
+| `vm_sap_cache` | VM → מס' פריוריטי (cache, מתמלא מ-summary) |
+| `auth_settings` | קונפיג Entra SSO (key/value, לא ב-.env) |
+| `authz_users` | allow-list הרשאות SSO (`admin`/`readonly`) |
+| `vm_perf_hourly` / `vm_perf_daily` | roll-up ביצועים לכל VM: פיק/ממוצע CPU ו-RAM, ספירת דקות בעומס, ו-CPU Ready (פיק, ממוצע, דקות ≥5%/≥10%); שעתי נשמר 30 יום, יומי ~6 חודשים |
+| `vm_snapshots` / `vm_snapshot_items` | צילומי מצב מלאי VMs (feature History); `taken_by='system-daily'` = גיבוי יומי אוטומטי (01:15), `protected=1` = גיבוי חודשי אוטומטי, לא נמחק אוטומטית |
+| `vm_snapshot_env_data` | `summary_json` מלא (VMs+Hosts+Clusters+Datastores) לכל environment בכל snapshot — חדש 4.9.1, לצורך גישת דשבורד חיצוני |
+| `customer_billing_config` | % גדילה פטורה + מחיר ליחידת משאב, לפי לקוח (feature חיוב, חדש 4.9) |
 
-### devices
-| עמודה | סוג | תיאור |
-|-------|-----|--------|
-| id | INTEGER | מזהה אוטומטי |
-| farm | TEXT | הסביבה שאליה שייך (TC-FARM / ALL / ...) |
-| name | TEXT | שם ידידותי |
-| type | TEXT | UCS / InfiniBand / Host / Storage / Switch / Generic |
-| host | TEXT | כתובת IP / hostname |
-| username | TEXT | משתמש לגישה |
-| password | TEXT | סיסמה |
-| port | INTEGER | פורט (ברירת מחדל: 443) |
-| protocol | TEXT | https / http / ssh / snmp / other |
-| notes | TEXT | הערות |
-| enabled | INTEGER | 1=פעיל, 0=כבוי |
-| created_at | TEXT | תאריך יצירה |
-| updated_at | TEXT | תאריך עדכון |
+כל הטבלאות נוצרות/עוברות מיגרציה אוטומטית ב-`init_db()` בעליית השירות.
+סכימת ה-SQL המלאה ב-`PROJECT_STATUS.md`.
 
 ---
 
-## הפעלה ועצירה
+## אימות והרשאות
 
-### הפעלה ידנית (ללא חלון)
-```
-פתח את start_server.vbs בלחיצה כפולה
-```
+- **שתי דרכי כניסה:** Microsoft Entra ID SSO (OAuth2 Authorization Code) לכל משתמש, או
+  שם משתמש/סיסמה (AD דרך LDAP + fallback local) — מוגבל ל-IPs מקומיים בלבד (`LOCAL_LOGIN_SOURCE_IPS`).
+- **Allow-list** (`authz_users`) — משתמש Entra שאינו ברשימה נחסם.
+- **JWT** (HS256) ב-cookie HttpOnly `auth_token`; CSRF דרך cookie `csrf_token` + header `X-CSRF-Token`.
+- ניהול דרך `/admin/permissions` (allow-list) ו-`/admin/overview#sso` (קונפיג SSO).
 
-### עצירה ידנית
-```powershell
-.\stop_server.ps1
-```
-
-### התקנת Windows Service (24/7)
-```powershell
-# הרץ כ-Administrator
-powershell -ExecutionPolicy Bypass -File install_service.ps1
-```
-- השרת יעלה אוטומטית עם Windows
-- אם קורס, NSSM מפעיל מחדש תוך 5 שניות
-- לוגים ב-`logs\dashboard_stdout.log`
-
-### הסרת ה-Service
-```powershell
-Stop-Service UcsDashboard
-.\tools\nssm\nssm.exe remove UcsDashboard confirm
-```
-
----
-
-## סקציות בדשבורד
-
-| סקציה | תוכן |
-|--------|-------|
-| KPI Cards | FI / Chassis / Blades / Racks / SP / Faults |
-| System Info | Domain, IP, Uptime, Mode |
-| Fabric Interconnects | מודל, Serial, IP, State |
-| Blade Servers | CPU, Memory, Storage, RAID, Service Profile, vCenter, שיוך, ארון |
-| Rack Servers | מידע בסיסי |
-| CPU Summary | מודל CPU, Cores, GHz, Status – ניתן לסינון |
-| Memory | כל DIMM, GB, Type, MHz – ניתן לסינון |
-| PSU | לכל chassis, צריכה, Serial |
-| Fan Modules | לכל chassis |
-| Blade IPs | Management IP per blade |
-| Firmware | BIOS + CIMC + Adapter גרסה לכל blade |
-| Power & Temp | Input/Output Watt per chassis |
-| Physical Adapters | VIC model, serial per blade |
-| vNIC Ethernet | MAC addresses per interface |
-| vHBA FC | WWPN / Node WWN per HBA |
-| Pool Availability | UUID/IP/MAC/WWPN: Size, Assigned, Free |
-| Active Faults | כל השגיאות עם severity |
+פירוט זרימת האימות המלאה, משתני env, וטבלת מודל ההרשאות — ב-`PROJECT_STATUS.md`.
 
 ---
 
@@ -186,26 +229,43 @@ Stop-Service UcsDashboard
 
 | רכיב | טכנולוגיה |
 |------|-----------|
-| Backend | Python 3.14, FastAPI 0.111, uvicorn |
+| Backend | Python 3.14, FastAPI, uvicorn |
 | UCS API | Cisco UCSM XML API (HTTPS POST /nuova) |
-| Database | SQLite 3 (built-in Python) |
-| Frontend | Vanilla HTML/CSS/JavaScript (ללא framework) |
-| Excel Export | SheetJS (xlsx) CDN |
-| 24/7 Service | NSSM (Non-Sucking Service Manager) |
+| Infinidat API | REST JSON over HTTPS |
+| vCenter API | pyVmomi (PropertyCollector bulk fetch) |
+| Veeam EM | REST API v1.6 (session-based) |
+| Veeam B&R | REST API v1 (OAuth2 Bearer) |
+| DB | SQLite 3 (WAL mode) |
+| AI | Ollama (שרת LLM פנימי, streaming) |
+| Excel | openpyxl (import) + SheetJS (ייצוא רגיל, vendored) + ExcelJS (ייצוא מעוצב — צבעים/גבולות, vendored, חדש 4.8) |
+| Frontend | Vanilla HTML/CSS/JavaScript |
+| Service | NSSM (Non-Sucking Service Manager) |
+| Auth | JWT HS256 (HttpOnly cookie) + CSRF double-submit + Entra ID SSO |
+
+---
+
+## אבטחה
+
+שלושה סבבי סקירת אבטחה בוצעו: Round 1 + Round 2 (יולי 2026) ו-Round 3 (ספטמבר 2026).
+ב-Round 3 התגלה ותוקן ש-`_CSRFMiddleware` היה בפועל **pass-through ריק** מאז שנוצר —
+לא בדק שום דבר — וכן open redirect אחרי SSO login (`next.startswith("/")` קיבל גם `//evil.com`)
+וכמה ממצאי XSS ברגרסיות בדפים חדשים יותר. כל אלה תוקנו ומתועדים ב-`PROJECT_STATUS.md`.
+פריט אחד עדיין ממתין: CSP `unsafe-inline` (דורש refactor מלא של inline scripts ב-frontend).
+
+> `SECURITY_REVIEW.md` ו-`SECURITY_REVIEW_ROUND2.md` הם תיעוד נקודתי (snapshot) של הסבבים
+> הללו נכון ליולי 2026 — הם **אינם** מכסים תכונות שנוספו מאז (עוזר AI, Entra SSO, allow-list)
+> ואינם כוללים את ממצאי/תיקוני Round 3. ממצאי סקירת קוד עדכניים יותר (ספטמבר 2026) מתועדים
+> ב-`PROJECT_STATUS.md`.
 
 ---
 
 ## הרחבות עתידיות
 
-- [ ] **InfiniBand** – ניטור Mellanox/NVIDIA UFM דרך REST API
-- [ ] **VMware vCenter** – חיבור לרשימת VMs per blade
-- [ ] **Storage** – NetApp / Pure Storage API integration  
-- [ ] **Alerts** – email/Teams notification על Critical faults
-- [ ] **History** – שמירת snapshots תקופתיים ב-DB לגרפים
-- [ ] **Authentication** – login page עם LDAP/AD
-- [ ] **Dark/Light mode toggle**
-- [ ] **Scheduled auto-refresh** – רענון אוטומטי כל X דקות
+- [ ] CSP `unsafe-inline` refactor — הוצאת inline scripts לקבצי JS חיצוניים
+- [ ] **Alerts badge** בסיידבר — events ברמת ERROR/WARNING
+- [ ] **SRM REST API** — שדרוג SRM לגרסה 8.3+ לנתוני protection groups
+- [ ] **DR Drill-down לקוח** — פירוט VM-רמה עם RPO היסטורי
 
 ---
 
-*נוצר: יוני 2026 | גרסה: 3.0.0*
+*עדכון אחרון: ספטמבר 2026 (22/09/2026) | גרסה: 4.9.1 — תואם ל-`PROJECT_STATUS.md`*

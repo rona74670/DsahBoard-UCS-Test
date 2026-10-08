@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ביצועים CPU/RAM | תא הטייס</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    .vc-header-meta { display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; }
+    .vc-badge { background:#0d1a2d; color:#58a6ff; border:1px solid #58a6ff; border-radius:5px; padding:0.2rem 0.6rem; font-size:0.8rem; font-weight:600; }
+    .kpi-row { display:flex; flex-wrap:wrap; gap:1rem; padding:1.2rem 1.5rem 0.5rem; }
+    .kpi-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:1rem 1.4rem; min-width:130px; flex:1 1 130px; display:flex; flex-direction:column; gap:0.25rem; }
+    .kpi-label { font-size:0.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
+    .kpi-value { font-size:1.8rem; font-weight:700; color:var(--text); line-height:1; direction:ltr; unicode-bidi:isolate; }
+    .kpi-detail { font-size:0.68rem; color:var(--muted); margin-top:0.15rem; }
+    .kpi-card.red .kpi-value { color:#f85149; }
+    .kpi-card.amber .kpi-value { color:#e3b341; }
+    .kpi-card.blue .kpi-value { color:#58a6ff; }
+    .kpi-card.green .kpi-value { color:#3fb950; }
+
+    .vc-select, .vc-search, .vc-input {
+      background:var(--card-bg,#0d1117); border:1px solid var(--border); border-radius:6px;
+      padding:0.4rem 0.7rem; color:var(--text); font-size:0.85rem;
+    }
+    .vc-input.num { width:64px; text-align:center; }
+    .vc-select:focus, .vc-search:focus, .vc-input:focus { outline:none; border-color:#58a6ff; }
+    .export-btn { background:#161b22; color:#58a6ff; border:1px solid #1f6feb; border-radius:6px; padding:0.35rem 0.9rem; font-size:0.82rem; cursor:pointer; white-space:nowrap; }
+    .export-btn:hover { background:#1f6feb; color:#fff; }
+    .vc-toolbar { display:flex; gap:0.8rem; align-items:center; padding:0.7rem 1.5rem; flex-wrap:wrap; border-bottom:1px solid var(--border); background:var(--surface); }
+    .vc-toolbar label { font-size:0.8rem; color:var(--muted); display:flex; align-items:center; gap:0.35rem; }
+
+    table.data-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
+    .data-table th { background:var(--surface); color:var(--muted); font-size:0.72rem; font-weight:700; letter-spacing:.04em; padding:0.5rem 0.7rem; border-bottom:1px solid var(--border); text-align:right; white-space:nowrap; }
+    .data-table th.sortable { cursor:pointer; user-select:none; }
+    .data-table th.sortable:hover { color:var(--text); }
+    .data-table td { padding:0.45rem 0.7rem; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:middle; }
+    .data-table tbody tr:hover td { background:rgba(88,166,255,.04); }
+    .center { text-align:center; }
+    .name-cell { font-weight:600; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .cust-row { cursor:pointer; }
+    .cust-row.expanded > td:first-child::before { content:'▼ '; font-size:0.6rem; color:var(--accent); }
+    .cust-row:not(.expanded) > td:first-child::before { content:'▶ '; font-size:0.6rem; color:var(--muted); }
+    .vm-sub-row td { background:#0a0f16 !important; font-size:0.78rem; padding:0.35rem 0.7rem; cursor:pointer; }
+    .chart-row td { background:#070b11 !important; padding:0.8rem 1.2rem; }
+    .env-badge { display:inline-block; padding:0.05rem 0.45rem; border-radius:4px; font-size:0.68rem; font-weight:700; }
+    .env-badge.TC     { background:#0d1a2d; color:#79c0ff; border:1px solid #1f6feb; }
+    .env-badge.TC8    { background:#001a2d; color:#79c0ff; border:1px solid #79c0ff; }
+    .env-badge.PT     { background:#0d2010; color:#3fb950; border:1px solid #2ea043; }
+    .env-badge.Fattal { background:#2d1040; color:#d2a8ff; border:1px solid #8957e5; }
+    .pct { font-weight:700; direction:ltr; unicode-bidi:isolate; display:inline-block; }
+    .pct.hot  { color:#f85149; }
+    .pct.warm { color:#e3b341; }
+    .pct.ok   { color:#3fb950; }
+    .when { color:var(--muted); font-size:0.7rem; direction:ltr; unicode-bidi:isolate; display:block; }
+    .muted { color:var(--muted); }
+    .empty-row td { color:var(--muted); font-style:italic; text-align:center; padding:1.5rem; }
+    .legend { display:flex; gap:1rem; font-size:0.75rem; color:var(--muted); margin-bottom:0.4rem; }
+    .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-inline-end:4px; }
+    .row-export-btn { background:#0d1a2d; color:#79c0ff; border:1px solid #1f6feb; border-radius:5px; padding:0.1rem 0.5rem; font-size:0.7rem; cursor:pointer; white-space:nowrap; margin-inline-start:0.5rem; }
+    .row-export-btn:hover { background:#1f6feb; color:#fff; }
+    .lv { display:inline-block; padding:0.1rem 0.5rem; border-radius:10px; font-size:0.7rem; font-weight:700; white-space:nowrap; cursor:help; }
+    .lv-3 { background:#2d0000; color:#f85149; border:1px solid #f85149; }
+    .lv-2 { background:#2d1a00; color:#e3b341; border:1px solid #e3b341; }
+    .lv-1 { background:#161b22; color:#8b949e; border:1px solid #484f58; }
+    .lv-0 { background:#0d2010; color:#3fb950; border:1px solid #2ea043; }
+    .rdy-crit { color:#f85149; } .rdy-warn { color:#e3b341; } .rdy-ok { color:#3fb950; }
+    .rdy-flag { display:inline-block; margin-inline-start:4px; cursor:help; }
+    .lv--1 { color:var(--muted); font-size:0.7rem; }
+    #perf-note { font-size:0.78rem; color:var(--muted); padding:0.6rem 1.5rem 0; }
+  </style>
+</head>
+<body>
+<script src="/static/auth.js"></script>
+<script>if(localStorage.getItem('sb-collapsed')==='1')document.body.className+=' sb-collapsed';</script>
+<div id="layout">
+  <aside id="sidebar"></aside>
+
+  <div id="content-wrap">
+  <header>
+    <div class="header-inner">
+      <span class="logo">&#x1F4C8; ביצועים — פיקים של CPU ו-RAM</span>
+      <div class="vc-header-meta">
+        <span class="vc-badge" id="hdr-total">טוען...</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="vc-toolbar">
+    <label>טווח:
+      <select class="vc-select" id="f-range" onchange="load()">
+        <option value="24h">24 שעות אחרונות</option>
+        <option value="7d" selected>7 ימים</option>
+        <option value="30d">30 יום</option>
+        <option value="90d">90 יום</option>
+        <option value="180d">6 חודשים</option>
+      </select>
+    </label>
+    <label>סביבה:
+      <select class="vc-select" id="f-env" onchange="render()">
+        <option value="">הכל</option><option>TC</option><option>TC8</option><option>PT</option><option>Fattal</option>
+      </select>
+    </label>
+<label>לקוח:
+      <select class="vc-select" id="f-cust" onchange="render()" style="max-width:220px"><option value="">כל הלקוחות</option></select>
+    </label>
+    <input class="vc-search" id="f-search" placeholder="חיפוש שרת / לקוח / פריוריטי…" oninput="render()" style="min-width:230px" />
+    <label title="שרת שהפיק שלו עבר את הסף יסומן באדום">סף CPU %: <input class="vc-input num" id="t-cpu" type="number" min="1" max="100" value="80" onchange="saveThresholds();render()" /></label>
+    <label>סף RAM %: <input class="vc-input num" id="t-ram" type="number" min="1" max="100" value="85" onchange="saveThresholds();render()" /></label>
+    <label>רמת עומס:
+      <select class="vc-select" id="f-level" onchange="render()">
+        <option value="">הכל</option><option value="3">רק בעייתיים</option><option value="2">לתשומת לב ומעלה</option>
+      </select>
+    </label>
+    <label title="מוסיף עמודות CPU Ready (פיק וממוצע, לכל vCPU) ואזהרות. תקין &lt; 5%, אזהרה 5–10%, קריטי ≥ 10%"><input type="checkbox" id="f-ready" onchange="saveReady();render()" /> &#x23F1; הצג CPU Ready</label>
+    <label title="מסמן בגרף של כל שרת את זמני הגיבוי של Veeam (מוסיף קריאה לשרתי הגיבוי בפתיחת גרף)"><input type="checkbox" id="f-bk" onchange="saveBk();render()" /> &#x1F4BE; הצג זמני גיבוי בגרף</label>
+    <label title="מסמן נקודות של jobs מסוג רפליקציה (Replica / סנאפשוט, למשל FT-Rep-1) בצבע נפרד. עובד גם בלי 'הצג זמני גיבוי'"><input type="checkbox" id="f-bksnap" onchange="saveBk();render()" /> הצג רפליקציה / סנאפשוט</label>
+    <label><input type="checkbox" id="f-over" onchange="render()" /> הצג רק שרתים שעברו את הסף</label>
+    <label><input type="checkbox" id="f-flat" onchange="render()" /> רשימת שרתים (ללא קיבוץ לפי לקוח)</label>
+    <button class="export-btn" id="btn-export" onclick="exportExcel()" title="מייצא את השרתים לפי הסינון הנוכחי">&#x1F4E5; יצוא ל-Excel</button>
+  </div>
+  <div id="perf-note"></div>
+
+  <div class="kpi-row">
+    <div class="kpi-card blue"><div class="kpi-label">שרתים נמדדים</div><div class="kpi-value" id="k-vms">–</div><div class="kpi-detail" id="k-vms-d"></div></div>
+    <div class="kpi-card red"><div class="kpi-label">עברו סף CPU</div><div class="kpi-value" id="k-cpu">–</div><div class="kpi-detail" id="k-cpu-d"></div></div>
+    <div class="kpi-card red"><div class="kpi-label">עברו סף RAM</div><div class="kpi-value" id="k-ram">–</div><div class="kpi-detail" id="k-ram-d"></div></div>
+    <div class="kpi-card red"><div class="kpi-label">🔴 בעייתיים</div><div class="kpi-value" id="k-lv3">–</div><div class="kpi-detail">עומס גבוה חוזר</div></div>
+    <div class="kpi-card amber"><div class="kpi-label">🟠 לתשומת לב</div><div class="kpi-value" id="k-lv2">–</div><div class="kpi-detail">עומס בינוני/מקוטע</div></div>
+    <div class="kpi-card red" id="k-rdy-card" style="display:none"><div class="kpi-label">&#x26A0; CPU Ready חריג</div><div class="kpi-value" id="k-rdy">–</div><div class="kpi-detail" id="k-rdy-d"></div></div>
+    <div class="kpi-card green"><div class="kpi-label">איסוף נתונים</div><div class="kpi-value" id="k-cov" style="font-size:1.2rem">–</div><div class="kpi-detail" id="k-cov-d"></div></div>
+  </div>
+
+  <div style="padding:0.6rem 1.5rem 1.5rem">
+    <table class="data-table">
+      <thead id="thead"></thead>
+      <tbody id="tbody"><tr class="empty-row"><td colspan="11">⏳ טוען נתונים...</td></tr></tbody>
+    </table>
+  </div>
+  </div><!-- /content-wrap -->
+</div><!-- /layout -->
+
+<script src="/static/exceljs.min.js"></script>
+<script src="/static/sidebar.js?v=20261005c"></script>
+<script>
+var _rows = [];            // per-VM aggregates from /api/vcenter/perf
+var _stats = {};
+var _customerMap = {};
+var _expanded = new Set();
+var _chartOpen = new Set();   // "env|vm" keys with the chart row open
+var _sortCol = 'cpu', _sortDir = -1;
+var _range = '7d';
+var e = window.escapeHtml || function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+
+function loadThresholds() {
+  try {
+    var t = JSON.parse(localStorage.getItem('perf-thresholds') || '{}');
+    if (t.cpu) document.getElementById('t-cpu').value = t.cpu;
+    if (t.ram) document.getElementById('t-ram').value = t.ram;
+  } catch (x) {}
+}
+function saveThresholds() {
+  try { localStorage.setItem('perf-thresholds', JSON.stringify({cpu: tCpu(), ram: tRam()})); } catch (x) {}
+}
+// ── CPU Ready (per vCPU %, VMware guidance: < 5 normal, 5-10 warning, >= 10 critical) ──
+var RDY_WARN = 5, RDY_CRIT = 10;
+function readyOn() { return document.getElementById('f-ready').checked; }
+function bkOn() { return document.getElementById('f-bk').checked; }
+function bkSnapOn() { return document.getElementById('f-bksnap').checked; }
+function loadBk() { try { document.getElementById('f-bk').checked = localStorage.getItem('perf-bk') === '1'; document.getElementById('f-bksnap').checked = localStorage.getItem('perf-bksnap') === '1'; } catch (x) {} }
+function saveBk() { try { localStorage.setItem('perf-bk', bkOn() ? '1' : '0'); localStorage.setItem('perf-bksnap', bkSnapOn() ? '1' : '0'); } catch (x) {} }
+function loadReady() { try { document.getElementById('f-ready').checked = localStorage.getItem('perf-ready') === '1'; } catch (x) {} }
+function saveReady() { try { localStorage.setItem('perf-ready', readyOn() ? '1' : '0'); } catch (x) {} }
+function rdyCls(p) { return p >= RDY_CRIT ? 'crit' : (p >= RDY_WARN ? 'warn' : 'ok'); }
+function readyPeakHtml(v) {
+  if (!v.ready_samples) return '<span class="muted">—</span>';
+  var p = v.ready_max_pct || 0, c = rdyCls(p);
+  var flag = c === 'ok' ? '' : '<span class="rdy-flag" title="' + (c === 'crit' ? 'קריטי' : 'אזהרה') + ': CPU Ready ' + r1(p) + '% לכל vCPU (תקין &lt; 5%)">' + (c === 'crit' ? '🔴' : '⚠️') + '</span>';
+  return '<span class="pct rdy-' + c + '">' + r1(p) + '%</span>' + flag + '<span class="when">' + fmtWhen(v.ready_max_ts) + '</span>';
+}
+function readyAvgHtml(v) {
+  if (!v.ready_samples) return '<span class="muted">—</span>';
+  var p = v.ready_avg_pct || 0;
+  return '<span class="pct rdy-' + rdyCls(p) + '" title="' + (v.ready_n_warn || 0) + ' דקות ≥5% · ' + (v.ready_n_crit || 0) + ' דקות ≥10%">' + (Math.round(p * 100) / 100) + '%</span>';
+}
+function tCpu() { return parseFloat(document.getElementById('t-cpu').value) || 80; }
+function tRam() { return parseFloat(document.getElementById('t-ram').value) || 85; }
+
+function fmtWhen(ts) {            // 'YYYY-MM-DD HH:MM' -> 'DD/MM HH:MM'
+  if (!ts) return '';
+  var m = /^(\d{4})-(\d\d)-(\d\d)(?: (\d\d:\d\d))?/.exec(ts);
+  return m ? (m[3] + '/' + m[2] + (m[4] ? ' ' + m[4] : '')) : ts;
+}
+function pctHtml(v, thr) {
+  if (v == null) return '<span class="muted">—</span>';
+  var cls = v >= thr ? 'hot' : (v >= thr - 15 ? 'warm' : 'ok');
+  return '<span class="pct ' + cls + '">' + (Math.round(v * 10) / 10) + '%</span>';
+}
+// ── Load meter: tells a one-off spike from recurring load ──────────────────
+// Per resource the collector counts minutes at >= 70% ("medium") and >= 85% ("high"), and in how
+// many hours/days the VM had a meaningful stretch of high load ("hot" buckets).
+//   problematic : high load >= 3% of the time, or hot in >= 3 buckets covering >= 20% of the range
+//   attention   : medium load >= 20% of the time, or hot in >= 2 buckets, or high load >= 0.5%
+//   one-off     : touched high load but rarely (a spike, not a pattern)
+var LV_LABEL = {3: '🔴 בעייתי', 2: '🟠 לתשומת לב', 1: '⚪ פיק חד-פעמי', 0: '🟢 תקין', '-1': '— מעט נתונים'};
+function resLevel(name, n, nMid, nHigh, hotB, buckets) {
+  if (!n || n < 30) return { lv: -1, idx: 0, why: '' };
+  var sh = nHigh / n * 100, sm = nMid / n * 100, hp = buckets ? hotB / buckets * 100 : 0;
+  var unit = _range === '24h' ? 'שעות' : 'ימים';
+  var lv = 0;
+  if (sh >= 3 || (hotB >= 3 && hp >= 20)) lv = 3;
+  else if (sm >= 20 || hotB >= 2 || sh >= 0.5) lv = 2;
+  else if (nHigh >= 1) lv = 1;
+  var why = name + ': ≥85% ב-' + (Math.round(sh * 10) / 10) + '% מהזמן · ≥70% ב-' + (Math.round(sm * 10) / 10) + '% · עומס גבוה ב-' + hotB + ' מתוך ' + buckets + ' ' + unit;
+  return { lv: lv, idx: sh * 3 + sm + hp * 0.5, why: why };
+}
+function annotate(v) {
+  var c = resLevel('CPU', v.samples, v.cpu_n_mid, v.cpu_n_high, v.cpu_hot_buckets, v.buckets);
+  var m = resLevel('RAM', v.samples, v.mem_n_mid, v.mem_n_high, v.mem_hot_buckets, v.buckets);
+  v._lv = Math.max(c.lv, m.lv);
+  v._idx = Math.max(c.idx, m.idx);
+  v._why = [c, m].filter(function (x) { return x.lv === v._lv && x.lv >= 0; }).map(function (x) { return x.why; }).join(' | ') || 'פחות מ-30 דקות דגימה בטווח';
+}
+function lvBadge(v) {
+  return '<span class="lv lv-' + v._lv + '" title="' + e(v._why) + '">' + LV_LABEL[v._lv] + '</span>';
+}
+function r1(n) { return n == null ? null : Math.round(n * 10) / 10; }
+
+async function load() {
+  _range = document.getElementById('f-range').value;
+  document.getElementById('tbody').innerHTML = '<tr class="empty-row"><td colspan="11">⏳ טוען נתונים...</td></tr>';
+  try {
+    var [perf, cm] = await Promise.all([
+      fetch('/api/vcenter/perf?range=' + _range, { credentials: 'include' }).then(function (r) { return r.json(); }),
+      fetch('/api/customers/map', { credentials: 'include' }).then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; }),
+    ]);
+    _rows = perf.data || [];
+    _rows.forEach(annotate);
+    _stats = perf.stats || {};
+    _customerMap = cm || {};
+  } catch (x) {
+    document.getElementById('tbody').innerHTML = '<tr class="empty-row"><td colspan="11">שגיאה בטעינת הנתונים</td></tr>';
+    return;
+  }
+  fillCustomers();
+  render();
+}
+
+// Customer dropdown: built from the loaded rows (keeps the current choice across reloads).
+function fillCustomers() {
+  var sel = document.getElementById('f-cust'), cur = sel.value, seen = {};
+  _rows.forEach(function (v) { var k = v.sap_number || '__nosap__'; if (!seen[k]) seen[k] = _customerMap[v.sap_number] || (v.sap_number || 'ללא פריוריטי'); });
+  var keys = Object.keys(seen).sort(function (a, b) { return seen[a].localeCompare(seen[b], 'he'); });
+  sel.innerHTML = '<option value="">כל הלקוחות</option>' + keys.map(function (k) { return '<option value="' + e(k) + '">' + e(seen[k]) + '</option>'; }).join('');
+  sel.value = seen[cur] !== undefined ? cur : '';
+}
+function custName(key) { var o = document.querySelector('#f-cust option[value="' + key.replace(/"/g, '\\"') + '"]'); return o ? o.textContent : key; }
+function safePart(t) { return String(t || '').trim().replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_').slice(0, 60); }
+
+function filtered() {
+  var env = document.getElementById('f-env').value;
+  var q = document.getElementById('f-search').value.trim().toLowerCase();
+  var over = document.getElementById('f-over').checked;
+  var lvMin = parseInt(document.getElementById('f-level').value, 10) || 0;
+  var cu = document.getElementById('f-cust').value;
+  var tc = tCpu(), tr = tRam();
+  return _rows.filter(function (v) {
+    if (env && v.environment !== env) return false;
+    if (cu && (v.sap_number || '__nosap__') !== cu) return false;
+    if (q && !((v.vm_name || '').toLowerCase().includes(q) || (v.sap_number || '').toLowerCase().includes(q) ||
+               (_customerMap[v.sap_number] || '').toLowerCase().includes(q))) return false;
+    if (over && !(v.max_cpu_pct >= tc || v.max_mem_pct >= tr || (readyOn() && v.ready_max_pct >= RDY_WARN))) return false;
+    if (lvMin && v._lv < lvMin) return false;
+    return true;
+  });
+}
+
+function buildGroups(vms) {
+  var map = {};
+  vms.forEach(function (v) {
+    var key = v.sap_number || '__nosap__';
+    var g = map[key] || (map[key] = { key: key, sap: v.sap_number || '', name: _customerMap[v.sap_number] || (v.sap_number ? v.sap_number : 'ללא פריוריטי'), vms: [] });
+    g.vms.push(v);
+  });
+  var tc = tCpu(), tr = tRam();
+  return Object.values(map).map(function (g) {
+    g.cpu = Math.max.apply(null, g.vms.map(function (v) { return v.max_cpu_pct || 0; }));
+    g.ram = Math.max.apply(null, g.vms.map(function (v) { return v.max_mem_pct || 0; }));
+    g.idx = Math.max.apply(null, g.vms.map(function (v) { return v._idx || 0; }));
+    g.lv3 = g.vms.filter(function (v) { return v._lv === 3; }).length;
+    g.lv2 = g.vms.filter(function (v) { return v._lv === 2; }).length;
+    g.overCpu = g.vms.filter(function (v) { return v.max_cpu_pct >= tc; }).length;
+    g.overRam = g.vms.filter(function (v) { return v.max_mem_pct >= tr; }).length;
+    g.ready = Math.max.apply(null, g.vms.map(function (v) { return v.ready_max_pct || 0; }));
+    g.overReady = g.vms.filter(function (v) { return v.ready_max_pct >= RDY_WARN; }).length;
+    return g;
+  });
+}
+
+function sortVal(o, col) {
+  switch (col) {
+    case 'name': return (o.name || o.vm_name || '').toLowerCase();
+    case 'vms':  return o.vms ? o.vms.length : 0;
+    case 'cpu':  return o.cpu != null ? o.cpu : (o.max_cpu_pct || 0);
+    case 'ram':  return o.ram != null ? o.ram : (o.max_mem_pct || 0);
+    case 'avgcpu': return o.avg_cpu_pct || 0;
+    case 'avgram': return o.avg_mem_pct || 0;
+    case 'load': return o._idx != null ? o._idx : (o.idx || 0);
+    case 'ready': return o.ready != null ? o.ready : (o.ready_max_pct || 0);
+    case 'avgready': return o.ready_avg_pct || 0;
+    case 'overCpu': return o.overCpu || 0;
+    case 'overRam': return o.overRam || 0;
+    default: return 0;
+  }
+}
+function sortBy(col) {
+  if (_sortCol === col) _sortDir *= -1; else { _sortCol = col; _sortDir = (col === 'name') ? 1 : -1; }
+  render();
+}
+function cmp(a, b) {
+  var av = sortVal(a, _sortCol), bv = sortVal(b, _sortCol);
+  return av < bv ? -_sortDir : av > bv ? _sortDir : 0;
+}
+function th(label, col, extra) {
+  var arrow = _sortCol === col ? (_sortDir === 1 ? '↑' : '↓') : '↕';
+  return '<th class="sortable' + (extra ? ' ' + extra : '') + '" onclick="sortBy(\'' + col + '\')">' + label + ' <span style="opacity:.6">' + arrow + '</span></th>';
+}
+
+function readyHeads() { return readyOn() ? th('פיק CPU Ready', 'ready', 'center') + th('ממוצע Ready', 'avgready', 'center') : ''; }
+
+function vmRow(v, indent) {
+  var tc = tCpu(), tr = tRam();
+  var k = v.environment + '|' + v.vm_name;
+  var html = '<tr class="vm-sub-row" data-k="' + e(k) + '" onclick="toggleChart(this.dataset.k)">' +
+    '<td class="name-cell" style="padding-right:' + (indent ? '2rem' : '0.7rem') + '" title="' + e(v.vm_name) + '">' + e(v.vm_name) + '</td>' +
+    '<td><span class="env-badge ' + e(v.environment) + '">' + e(v.environment) + '</span></td>' +
+    '<td class="center">' + (v.num_cpu || '—') + ' / ' + (v.mem_gb != null ? v.mem_gb : '—') + '</td>' +
+    '<td class="center">' + pctHtml(v.max_cpu_pct, tc) + '<span class="when">' + fmtWhen(v.max_cpu_ts) + '</span></td>' +
+    '<td class="center">' + pctHtml(v.avg_cpu_pct, tc) + '</td>' +
+    '<td class="center">' + pctHtml(v.max_mem_pct, tr) + '<span class="when">' + fmtWhen(v.max_mem_ts) + '</span></td>' +
+    '<td class="center">' + pctHtml(v.avg_mem_pct, tr) + '</td>' +
+    '<td class="center">' + lvBadge(v) + '</td>' +
+    (readyOn() ? '<td class="center">' + readyPeakHtml(v) + '</td><td class="center">' + readyAvgHtml(v) + '</td>' : '') +
+    '<td colspan="3"></td></tr>';
+  if (_chartOpen.has(k)) html += '<tr class="chart-row" id="chart-' + btoa(unescape(encodeURIComponent(k))).replace(/=/g, '') + '"><td colspan="11">⏳ טוען גרף...</td></tr>';
+  return html;
+}
+
+function render() {
+  var vms = filtered();
+  var tc = tCpu(), tr = tRam();
+  var flat = document.getElementById('f-flat').checked;
+
+  // KPIs
+  document.getElementById('hdr-total').textContent = vms.length + ' שרתים';
+  document.getElementById('btn-export').innerHTML = '&#x1F4E5; יצוא ל-Excel (' + vms.length + ' שרתים)';
+  document.getElementById('k-vms').textContent = vms.length;
+  document.getElementById('k-vms-d').textContent = 'שרתים פועלים שנדגמו בטווח';
+  var oc = vms.filter(function (v) { return v.max_cpu_pct >= tc; }).length;
+  var orr = vms.filter(function (v) { return v.max_mem_pct >= tr; }).length;
+  document.getElementById('k-cpu').textContent = oc;
+  document.getElementById('k-cpu-d').textContent = 'פיק CPU ≥ ' + tc + '%';
+  document.getElementById('k-ram').textContent = orr;
+  document.getElementById('k-ram-d').textContent = 'פיק RAM ≥ ' + tr + '%';
+  var rOn = readyOn();
+  document.getElementById('k-rdy-card').style.display = rOn ? '' : 'none';
+  if (rOn) {
+    var rw = vms.filter(function (v) { return v.ready_max_pct >= RDY_WARN; }).length;
+    var rc = vms.filter(function (v) { return v.ready_max_pct >= RDY_CRIT; }).length;
+    document.getElementById('k-rdy').textContent = rw;
+    document.getElementById('k-rdy-d').textContent = 'פיק ≥ 5% לכל vCPU · מתוכם ' + rc + ' קריטיים (≥ 10%)';
+  }
+  document.getElementById('k-lv3').textContent = vms.filter(function (v) { return v._lv === 3; }).length;
+  document.getElementById('k-lv2').textContent = vms.filter(function (v) { return v._lv === 2; }).length;
+  var from = _stats.daily_from;
+  document.getElementById('k-cov').textContent = from ? fmtWhen(from) : 'אין עדיין';
+  document.getElementById('k-cov-d').textContent = from ? 'תחילת איסוף · דגימה כל דקה' : 'האיסוף מתחיל אחרי הפעלת השירות';
+  var note = document.getElementById('perf-note');
+  note.textContent = 'CPU % = ניצול ביחס למקסימום ה-CPU של השרת (vCPU × תדר הליבה). RAM % = זיכרון פעיל (guest active) ביחס ל-RAM המוגדר. הפיק הוא הדגימה הגבוהה ביותר (דגימה כל דקה); "ממוצע" הוא ממוצע כל הדגימות בטווח. מד העומס: 🔴 בעייתי = עומס גבוה (≥85%) ביותר מ-3% מהזמן או בעומס גבוה חוזר בכמה ימים/שעות; 🟠 לתשומת לב = עומס בינוני (≥70%) ביותר מ-20% מהזמן או עומס גבוה שחוזר; ⚪ פיק חד-פעמי = נגע בעומס גבוה אבל נדיר. ריחוף על התווית מציג את הפירוט.' +
+    (readyOn() ? ' CPU Ready = אחוז הזמן שה-vCPU היה מוכן להרצה אך המתין למעבד פיזי, מחושב לכל vCPU (ממוצע דקה). תקין < 5% · ⚠️ אזהרה 5–10% · 🔴 קריטי ≥ 10%. הנתונים נאספים מרגע הפעלת התכונה (אין היסטוריה לפני כן).' : '');
+
+  var thead = document.getElementById('thead');
+  var tbody = document.getElementById('tbody');
+  if (!vms.length) {
+    thead.innerHTML = '';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="11">' + (_rows.length ? 'אין תוצאות לפי הסינון' : 'אין עדיין נתונים בטווח זה. האיסוף רץ ברקע — הנתונים יצטברו עם הזמן.') + '</td></tr>';
+    return;
+  }
+
+  if (flat) {
+    thead.innerHTML = '<tr>' + th('שם VM', 'name') + '<th>סביבה</th><th class="center">vCPU / RAM (GB)</th>' +
+      th('פיק CPU', 'cpu', 'center') + th('ממוצע CPU', 'avgcpu', 'center') + th('פיק RAM', 'ram', 'center') + th('ממוצע RAM', 'avgram', 'center') +
+      th('מד עומס', 'load', 'center') + readyHeads() + '<th colspan="3">לקוח</th></tr>';
+    tbody.innerHTML = vms.slice().sort(cmp).map(function (v) {
+      return vmRow(v, false).replace('<td colspan="3"></td>', '<td colspan="3" class="muted">' + e(_customerMap[v.sap_number] || v.sap_number || '—') + '</td>');
+    }).join('');
+  } else {
+    thead.innerHTML = '<tr>' + th('לקוח / שרת', 'name') + '<th>סביבה</th><th class="center">vCPU / RAM (GB)</th>' +
+      th('פיק CPU', 'cpu', 'center') + th('ממוצע CPU', 'avgcpu', 'center') + th('פיק RAM', 'ram', 'center') + th('ממוצע RAM', 'avgram', 'center') +
+      th('מד עומס', 'load', 'center') + readyHeads() + th('שרתים', 'vms', 'center') + th('עברו CPU', 'overCpu', 'center') + th('עברו RAM', 'overRam', 'center') + '</tr>';
+    var html = '';
+    buildGroups(vms).sort(cmp).forEach(function (g) {
+      var open = _expanded.has(g.key);
+      html += '<tr class="cust-row' + (open ? ' expanded' : '') + '" onclick="toggleCustomer(\'' + g.key.replace(/'/g, "\\'") + '\')">' +
+        '<td class="name-cell">' + e(g.name) + (g.sap ? ' <span class="muted" style="font-size:0.7rem">#' + e(g.sap) + '</span>' : '') +
+        ' <button class="row-export-btn" onclick="exportExcel(event,this.dataset.k)" data-k="' + e(g.key) + '">&#x1F4E5; Excel</button></td>' +
+        '<td></td><td></td>' +
+        '<td class="center">' + pctHtml(g.cpu, tc) + '</td><td></td>' +
+        '<td class="center">' + pctHtml(g.ram, tr) + '</td><td></td>' +
+        '<td class="center">' + (g.lv3 ? '<span class="lv lv-3">🔴 ' + g.lv3 + '</span> ' : '') + (g.lv2 ? '<span class="lv lv-2">🟠 ' + g.lv2 + '</span>' : (g.lv3 ? '' : '<span class="muted">—</span>')) + '</td>' +
+        (readyOn() ? '<td class="center">' + (g.overReady ? '<span class="pct rdy-' + rdyCls(g.ready) + '">' + r1(g.ready) + '%</span> <span class="muted" style="font-size:0.7rem">(' + g.overReady + ' שרתים)</span>' : '<span class="muted">—</span>') + '</td><td></td>' : '') +
+        '<td class="center" style="font-weight:700">' + g.vms.length + '</td>' +
+        '<td class="center">' + (g.overCpu ? '<span class="pct hot">' + g.overCpu + '</span>' : '<span class="muted">0</span>') + '</td>' +
+        '<td class="center">' + (g.overRam ? '<span class="pct hot">' + g.overRam + '</span>' : '<span class="muted">0</span>') + '</td></tr>';
+      if (open) g.vms.slice().sort(cmp).forEach(function (v) { html += vmRow(v, true); });
+    });
+    tbody.innerHTML = html;
+  }
+  _chartOpen.forEach(drawChart);
+}
+
+function toggleCustomer(key) { if (_expanded.has(key)) _expanded.delete(key); else _expanded.add(key); render(); }
+function toggleChart(k) { if (_chartOpen.has(k)) _chartOpen.delete(k); else _chartOpen.add(k); render(); }
+
+async function drawChart(k) {
+  var id = 'chart-' + btoa(unescape(encodeURIComponent(k))).replace(/=/g, '');
+  var row = document.getElementById(id);
+  if (!row) return;
+  var i = k.indexOf('|'), env = k.slice(0, i), name = k.slice(i + 1);
+  var cell = row.firstElementChild;
+  try {
+    var rm = /^(d+)([hd])$/.exec(_range), bdays = rm ? (rm[2] === 'h' ? 1 : +rm[1]) : 7;
+    var bkCtl = new AbortController(), bkTimer = setTimeout(function () { bkCtl.abort(); }, 45000);
+    var bkP = !(bkOn() || bkSnapOn()) ? Promise.resolve({ points: [] }) : fetch('/api/vcenter/perf/backups?name=' + encodeURIComponent(name) + '&days=' + bdays, { credentials: 'include', signal: bkCtl.signal })
+      .then(function (x) { return x.ok ? x.json() : { points: [], failed: true }; }).catch(function () { return { points: [], failed: true }; })
+      .then(function (x) { clearTimeout(bkTimer); return x; });
+    var r = await fetch('/api/vcenter/perf/vm?env=' + encodeURIComponent(env) + '&name=' + encodeURIComponent(name) + '&range=' + _range, { credentials: 'include' });
+    var j = await r.json();
+    var bkRes = await bkP, bk = bkRes.points || [];
+    var d = j.data || [];
+    if (d.length < 2) { cell.innerHTML = '<span class="muted">אין מספיק נתונים לגרף עדיין.</span>'; return; }
+    var W = 900, H = 170, pl = 34, pb = 20, pt = 8, pr = 8;
+    var n = d.length;
+    function X(i) { return pl + (W - pl - pr) * (n === 1 ? 0 : i / (n - 1)); }
+    function Y(v) { return pt + (H - pt - pb) * (1 - Math.min(Math.max(v || 0, 0), 100) / 100); }
+    function line(key, color) {
+      return '<polyline fill="none" stroke="' + color + '" stroke-width="1.6" points="' + d.map(function (p, i) { return X(i).toFixed(1) + ',' + Y(p[key]).toFixed(1); }).join(' ') + '"/>';
+    }
+    var grid = [0, 25, 50, 75, 100].map(function (g) {
+      return '<line x1="' + pl + '" x2="' + (W - pr) + '" y1="' + Y(g) + '" y2="' + Y(g) + '" stroke="#30363d" stroke-width="0.5"/>' +
+             '<text x="' + (pl - 4) + '" y="' + (Y(g) + 3) + '" text-anchor="end" font-size="9" fill="#8b949e">' + g + '%</text>';
+    }).join('');
+    var tl = [0, Math.floor((n - 1) / 2), n - 1].map(function (i) {
+      return '<text x="' + X(i) + '" y="' + (H - 4) + '" text-anchor="' + (i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle') + '" font-size="9" fill="#8b949e">' + fmtWhen(d[i].bucket) + '</text>';
+    }).join('');
+    var thr = '<line x1="' + pl + '" x2="' + (W - pr) + '" y1="' + Y(tCpu()) + '" y2="' + Y(tCpu()) + '" stroke="#f85149" stroke-width="0.6" stroke-dasharray="4 3" opacity=".6"/>';
+    var idx = {};
+    d.forEach(function (p, i) { idx[p.bucket] = i; });
+    var bkSvg = '', bkN = 0, snN = 0, showSnap = bkSnapOn();
+    bk.forEach(function (b) {
+      var isSnap = b.kind === 'replica';
+      if (isSnap ? !showSnap : !bkOn()) return;
+      var key = j.table === 'vm_perf_hourly' ? b.time.slice(0, 13) + ':00' : b.time.slice(0, 10);
+      if (!(key in idx)) return;
+      var tip = fmtWhen(b.time), x2 = null;
+      if (b.start && b.end) {
+        var ms = (new Date(b.end.replace(' ', 'T')) - new Date(b.start.replace(' ', 'T')));
+        if (ms >= 60000) {
+          tip = b.start.slice(11, 16) + '–' + b.end.slice(11, 16) + ' (' + (ms >= 3600000 ? (ms / 3600000).toFixed(1) + ' שעות' : Math.round(ms / 60000) + ' דק׳') + ')';
+          var ek = j.table === 'vm_perf_hourly' ? b.end.slice(0, 13) + ':00' : b.end.slice(0, 10);
+          if (ek in idx) x2 = X(idx[ek]);
+        } else tip = b.start.slice(11, 19);
+      }
+      if (isSnap) snN++; else bkN++;
+      var x = X(idx[key]);
+      if (x2 !== null && x2 > x) bkSvg += '<rect x="' + x + '" y="' + pt + '" width="' + (x2 - x) + '" height="' + (H - pt - pb) + '" fill="#f0883e" opacity=".15"><title>' + tip + '</title></rect>';
+      bkSvg += '<line x1="' + x + '" x2="' + x + '" y1="' + pt + '" y2="' + (H - pb) + '" stroke="' + (isSnap ? '#3fb9a8' : '#f0883e') + '" stroke-width="' + (isSnap ? 2 : 3) + '" opacity="' + (isSnap ? '.8' : '.35') + '"><title>' + (isSnap ? 'רפליקציה' : 'גיבוי') + ' ' + e(b.server) + ' · ' + tip + ' · ' + e(b.job || '') + '</title></line>';
+    });
+    var bkMsg = '';
+    if (bkOn() || showSnap) {
+      var errs = Object.keys(bkRes.errors || {});
+      var nRep = bk.filter(function (b) { return b.kind === 'replica'; }).length;
+      if (bkRes.failed) bkMsg = '<span class="muted">⚠ לא ניתן היה לבדוק גיבויים (שגיאה / זמן קצוב)</span>';
+      else if (bkOn() && bkN === 0 && !(showSnap && snN > 0)) bkMsg = '<span class="muted">⚠ לא נמצא גיבוי לשרת בטווח הזה' + (nRep ? ' (יש ' + nRep + ' נקודות רפליקציה — סמן "הצג רפליקציה / סנאפשוט")' : '') + (errs.length ? ' · לא ענו: ' + e(errs.join(', ')) : '') + '</span>';
+      else if (!bkOn() && snN === 0) bkMsg = '<span class="muted">⚠ לא נמצאו נקודות רפליקציה / סנאפשוט לשרת בטווח הזה</span>';
+      else if (errs.length) bkMsg = '<span class="muted">⚠ שרתי גיבוי שלא ענו: ' + e(errs.join(', ')) + '</span>';
+    }
+    cell.innerHTML = '<div class="legend"><span><i style="background:#58a6ff"></i>פיק CPU %</span><span><i style="background:#d2a8ff"></i>פיק RAM %</span>' + (bkOn() ? '<span><i style="background:#f0883e"></i>גיבוי (' + bkN + ')</span>' : '') + (showSnap ? '<span><i style="background:#3fb9a8"></i>רפליקציה/סנאפשוט (' + snN + ')</span>' : '') + '<span>' +
+      (j.table === 'vm_perf_hourly' ? 'מקסימום לכל שעה' : 'מקסימום לכל יום') + ' · ' + e(name) + '</span>' + bkMsg + '</div>' +
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-width:1100px;height:auto;direction:ltr">' + grid + bkSvg + thr + line('max_cpu_pct', '#58a6ff') + line('max_mem_pct', '#d2a8ff') + tl + '</svg>';
+  } catch (x) { cell.innerHTML = '<span class="muted">שגיאה בטעינת הגרף.</span>'; }
+}
+
+async function exportExcel(ev, onlyKey) {
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  var vms = filtered().filter(function (v) { return !onlyKey || (v.sap_number || '__nosap__') === onlyKey; }).slice().sort(function (a, b) { return (b._idx || 0) - (a._idx || 0); });
+  var wb = new ExcelJS.Workbook();
+  var ws = wb.addWorksheet('ביצועים', { views: [{ rightToLeft: true, state: 'frozen', ySplit: 1 }] });
+  var cols = ['לקוח', 'פריוריטי #', 'שם VM', 'סביבה', 'vCPU', 'RAM (GB)', 'פיק CPU %', 'זמן פיק CPU', 'ממוצע CPU %', 'פיק RAM %', 'זמן פיק RAM', 'ממוצע RAM %', 'דגימות', 'מד עומס', '% זמן CPU ≥85', '% זמן CPU ≥70', '% זמן RAM ≥85', '% זמן RAM ≥70', 'פירוט'];
+  if (readyOn()) cols.push('פיק CPU Ready % (לכל vCPU)', 'ממוצע CPU Ready %', 'דקות Ready ≥5%', 'דקות Ready ≥10%');
+  ws.columns = cols.map(function (c) { return { header: c, width: Math.max(c.length + 4, 12) }; });
+  ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F6FEB' } };
+  var tc = tCpu(), tr = tRam();
+  vms.forEach(function (v) {
+    var row = ws.addRow([_customerMap[v.sap_number] || '', v.sap_number || '', v.vm_name, v.environment, v.num_cpu, v.mem_gb,
+      r1(v.max_cpu_pct), v.max_cpu_ts || '', r1(v.avg_cpu_pct), r1(v.max_mem_pct), v.max_mem_ts || '', r1(v.avg_mem_pct), v.samples,
+      LV_LABEL[v._lv].replace(/^S+s/, ''),
+      r1((v.cpu_n_high || 0) / (v.samples || 1) * 100), r1((v.cpu_n_mid || 0) / (v.samples || 1) * 100),
+      r1((v.mem_n_high || 0) / (v.samples || 1) * 100), r1((v.mem_n_mid || 0) / (v.samples || 1) * 100), v._why].concat(readyOn() ? [r1(v.ready_max_pct), r1(v.ready_avg_pct), v.ready_n_warn || 0, v.ready_n_crit || 0] : []));
+    if (readyOn() && v.ready_max_pct >= RDY_WARN) row.getCell(20).font = { bold: true, color: { argb: v.ready_max_pct >= RDY_CRIT ? 'FFD1242F' : 'FFBF8700' } };
+    if (v.max_cpu_pct >= tc) row.getCell(7).font = { bold: true, color: { argb: 'FFD1242F' } };
+    if (v.max_mem_pct >= tr) row.getCell(10).font = { bold: true, color: { argb: 'FFD1242F' } };
+  });
+  var buf = await wb.xlsx.writeBuffer();
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  var cu = onlyKey || document.getElementById('f-cust').value;
+  a.download = 'vcenter_perf_' + (cu ? safePart(custName(cu)) + '_' : '') + _range + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+loadThresholds();
+loadReady();
+loadBk();
+load();
+</script>
+</body>
+</html>
