@@ -755,7 +755,7 @@ function vmRow(v, indent) {
     '<td class="name-cell" style="padding-right:' + (indent ? '2rem' : '0.7rem') + '" title="' + e(v.vm_name) + '">' + e(v.vm_name) + '</td>' +
     '<td><span class="env-badge ' + e(v.environment) + '">' + e(v.environment) + '</span></td>' +
     (esxiOn() ? '<td class="center">' + esxiCell(v) + '</td>' : '') +
-    '<td class="center">' + (v.num_cpu || '—') + ' / ' + (v.mem_gb != null ? v.mem_gb : '—') + '</td>' +
+    '<td class="center" style="direction:ltr;unicode-bidi:isolate">' + (v.num_cpu || '—') + ' / ' + (v.mem_gb != null ? v.mem_gb : '—') + '</td>' +
     '<td class="center">' + pctHtml(v.max_cpu_pct, tc) + '<span class="when">' + fmtWhen(v.max_cpu_ts) + '</span></td>' +
     '<td class="center">' + pctHtml(v.avg_cpu_pct, tc) + '</td>' +
     '<td class="center">' + pctHtml(v.max_mem_pct, tr) + '<span class="when">' + fmtWhen(v.max_mem_ts) + '</span></td>' +

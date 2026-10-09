@@ -18,7 +18,7 @@ import re
 from datetime import datetime, timedelta
 
 # Same idea as the right-sizing protection: database servers keep memory as cache on purpose.
-_DB_NAME_RE = re.compile(r"(sql|db|oracle|hana|mysql|maria|postgres|pgsql|mongo|redis|sybase|cache)", re.I)
+_DB_NAME_RE = re.compile(r"(sql|db|oracle|hana|mysql|maria|postgres|pgsql|mongo|redis|sybase|cache|(^|[^a-z])dc[0-9]*([^a-z]|$))", re.I)
 
 # Lookup order for sorting / verdicts
 _SEV_ORDER = {"crit": 3, "warn": 2, "info": 1, "ok": 0}
@@ -269,8 +269,8 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                               "קודם לבדוק אם הוגדר ל-VM Memory Limit ב-vCenter (גורם ל-balloon/swap גם ב-host פנוי) ולהסיר. "
                               "אחרת ל-ESXi עצמו חסר זיכרון: לראות את כרטיס ה-ESXi, להעביר שרתים או להוסיף זיכרון ל-host.")))
     if mem_lv >= 2:
-        db_en = " This looks like a database/cache server: they keep memory as cache on purpose, so high RAM is normal and the number cannot tell whether more RAM is needed (check Page Life Expectancy / paging inside the guest)." if is_db else ""
-        db_he = " נראה שזה שרת DB/Cache: שרתים כאלה מחזיקים זיכרון כ-cache בכוונה, ולכן RAM גבוה תקין והמספר לא אומר אם צריך עוד (לבדוק Page Life Expectancy / paging בתוך השרת)." if is_db else ""
+        db_en = " This looks like a database/cache/directory (Active Directory DC) server: they keep memory as cache on purpose, so high RAM is normal and the number cannot tell whether more RAM is needed (check Page Life Expectancy / paging inside the guest)." if is_db else ""
+        db_he = " נראה שזה שרת DB/Cache/Active Directory (DC): שרתים כאלה מחזיקים זיכרון כ-cache בכוונה, ולכן RAM גבוה תקין והמספר לא אומר אם צריך עוד (לבדוק Page Life Expectancy / paging בתוך השרת)." if is_db else ""
         has_press = swap or balloon or mlat >= 1
         findings.append(_f("info" if is_db else ("warn" if not has_press else "warn"), "Memory",
                            _t("Guest memory usage is high", "ניצול הזיכרון בשרת גבוה"),
@@ -327,8 +327,12 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
     # ---- Backup correlation ----------------------------------------------------------------------
     if backups and (backups.get("points") is not None):
         hits = []
-        for label, ts in (("CPU peak", s.get("max_cpu_ts")), ("RAM peak", s.get("max_mem_ts")),
-                          ("Ready peak", s.get("ready_max_ts")), ("Co-Stop peak", s.get("cs_max_ts"))):
+        for label, ts, val, floor in (("CPU peak", s.get("max_cpu_ts"), s.get("max_cpu_pct"), 85),
+                                      ("RAM peak", s.get("max_mem_ts"), s.get("max_mem_pct"), 85),
+                                      ("Ready peak", s.get("ready_max_ts"), s.get("ready_max_pct"), 5),
+                                      ("Co-Stop peak", s.get("cs_max_ts"), s.get("cs_max_pct"), 3)):
+            if (val or 0) < floor:
+                continue                      # only a peak that is high enough to matter can be blamed on a backup
             p = _near_backup(ts, backups)
             if p:
                 hits.append((label, ts, p))
