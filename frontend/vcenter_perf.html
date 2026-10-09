@@ -154,6 +154,10 @@
       <details><summary>⏱ CPU Ready — כשהשרת מחכה למעבד</summary><dl>
         <dt>מה זה</dt><dd>אחוז הזמן שהשרת <b>רצה לעבוד אבל חיכה בתור</b> למעבד פיזי פנוי על ה-ESXi. נמדד לכל vCPU.</dd>
         <dt>איך קוראים את זה</dt><dd>🟢 מתחת ל-5% תקין · 🟠 5–10% אזהרה · 🔴 10% ומעלה קריטי (השרת מרגיש איטי).</dd>
+        <dt>מד Ready (התג הראשון בעמודות Ready)</dt><dd>
+          <b>פיק לבדו לא אומר שיש בעיה.</b> המד בודק <b>כמה זמן</b> השרת היה ב-Ready גבוה, ואם זה חוזר בכמה שעות/ימים:<br>
+          🔴 בעייתי = Ready ≥10% ביותר מ-1% מהזמן, או ≥5% ביותר מ-5% מהזמן, או עומס מתמשך בכמה שעות/ימים שונים · 🟠 לתשומת לב = ≥5% ביותר מ-1% מהזמן, או בשעתיים/יומיים שונים · ⚪ פיק חד-פעמי = נגע ב-5% רק לרגע · 🟢 תקין.<br>
+          ריחוף על התג מראה את האחוזים וכמה דקות/שעות. <b>מתי לדאוג: 🟠 שחוזר או 🔴.</b> ⚪ בדרך כלל אירוע חד-פעמי (אתחול, vMotion, גיבוי).</dd>
         <dt>Co-Stop</dt><dd>שרת עם כמה vCPUs: ESXi חייב להריץ אותם <b>ביחד</b>, ולכן vCPU שסיים מחכה לשאר. זה הזמן (באחוזים) שהשרת מחכה כך. <b>מ-3% ומעלה = יש לשרת יותר vCPUs ממה שהוא צריך, וזה מאט אותו.</b> הפתרון: להפחית vCPUs. הוספת vCPUs רק מחמירה.</dd>
         <dt>Limit</dt><dd>אם מישהו הגדיר ב-vCenter <b>הגבלה (Limit)</b> על ה-CPU של השרת, הוא נחסם גם כשה-host פנוי. 🔴 = השרת נחסם (מספר הדקות), 🟢 = אין הגבלה. הפתרון: להסיר את ה-Limit.</dd>
         <dt>ההבדל מ-CPU %</dt><dd>CPU % גבוה = השרת עובד קשה. <b>Ready גבוה = ה-host עמוס מדי</b>, גם אם ה-CPU % של השרת נראה נמוך. זה הסימן הקלאסי ל"שרת איטי בלי בעיית משאבים".</dd>
@@ -426,6 +430,29 @@ function limitHtml(v) {
   if (v.lim_n > 0) return '<span class="pct hot" title="השרת נחסם על ידי Limit שהוגדר ל-CPU שלו (שיא ' + r1(v.lim_max_pct) + '%)">🔴 ' + v.lim_n + ' דק׳</span>';
   return '<span class="pct ok" title="אין Limit שחוסם את השרת">🟢</span>';
 }
+// ── Ready meter: tells a sustained problem from a one-off spike (like the CPU/RAM load meter) ──
+// Uses minutes-over-threshold, not the peak:
+//   problematic : >=10% in >1% of the time, or >=5% in >5% of the time, or sustained (>= 5 min/hour or 10 min/day
+//                 above 5%) in >= 3 hours/days covering >= 20% of the range
+//   attention   : >=5% in >1% of the time, or sustained in >= 2 hours/days
+//   one-off     : touched 5% but rarely
+function readyLevel(v) {
+  var n = v.ready_samples || 0;
+  if (n < 30) return { lv: -1, idx: 0, why: 'פחות מ-30 דקות דגימת Ready בטווח' };
+  var nw = v.ready_n_warn || 0, nc = v.ready_n_crit || 0;
+  var pw = nw / n * 100, pc = nc / n * 100;
+  var hb = v.ready_hot_buckets || 0, bk = v.buckets || 0, hp = bk ? hb / bk * 100 : 0;
+  var lv = 0;
+  if (pc > 1 || pw > 5 || (hb >= 3 && hp >= 20)) lv = 3;
+  else if (pw > 1 || hb >= 2) lv = 2;
+  else if (nw >= 1) lv = 1;
+  var unit = _range === '24h' ? 'שעות' : 'ימים';
+  return { lv: lv, idx: pc * 3 + pw + hp * 0.5,
+    why: 'Ready ≥5% ב-' + r1(pw) + '% מהזמן (' + nw + ' דק׳) · ≥10% ב-' + r1(pc) + '% (' + nc + ' דק׳) · עומס מתמשך ב-' + hb + ' מתוך ' + bk + ' ' + unit };
+}
+function rdyBadge(v) {
+  return '<span class="lv lv-' + v._rlv + '" title="' + e(v._rwhy) + '">' + LV_LABEL[v._rlv] + '</span>';
+}
 function rdyCls(p) { return p >= RDY_CRIT ? 'crit' : (p >= RDY_WARN ? 'warn' : 'ok'); }
 function readyPeakHtml(v) {
   if (!v.ready_samples) return '<span class="muted">—</span>';
@@ -474,6 +501,8 @@ function annotate(v) {
   var m = resLevel('RAM', v.samples, v.mem_n_mid, v.mem_n_high, v.mem_hot_buckets, v.buckets);
   v._lv = Math.max(c.lv, m.lv);
   v._idx = Math.max(c.idx, m.idx);
+  var rl = readyLevel(v);
+  v._rlv = rl.lv; v._ridx = rl.idx; v._rwhy = rl.why;
   v._why = [c, m].filter(function (x) { return x.lv === v._lv && x.lv >= 0; }).map(function (x) { return x.why; }).join(' | ') || 'פחות מ-30 דקות דגימה בטווח';
 }
 function lvBadge(v) {
@@ -525,7 +554,7 @@ function filtered() {
     if (cu && (v.sap_number || '__nosap__') !== cu) return false;
     if (q && !((v.vm_name || '').toLowerCase().includes(q) || (v.sap_number || '').toLowerCase().includes(q) ||
                (_customerMap[v.sap_number] || '').toLowerCase().includes(q))) return false;
-    if (over && !(v.max_cpu_pct >= tc || v.max_mem_pct >= tr || (readyOn() && (v.ready_max_pct >= RDY_WARN || v.cs_max_pct >= CS_WARN || v.lim_n > 0)) || (memOn() && memLevel(v) >= 1))) return false;
+    if (over && !(v.max_cpu_pct >= tc || v.max_mem_pct >= tr || (readyOn() && (v._rlv >= 2 || v.cs_max_pct >= CS_WARN || v.lim_n > 0)) || (memOn() && memLevel(v) >= 1))) return false;
     if (lvMin && v._lv < lvMin) return false;
     return true;
   });
@@ -548,6 +577,9 @@ function buildGroups(vms) {
     g.overCpu = g.vms.filter(function (v) { return v.max_cpu_pct >= tc; }).length;
     g.overRam = g.vms.filter(function (v) { return v.max_mem_pct >= tr; }).length;
     g.ready = Math.max.apply(null, g.vms.map(function (v) { return v.ready_max_pct || 0; }));
+    g.rlv3 = g.vms.filter(function (v) { return v._rlv === 3; }).length;
+    g.rlv2 = g.vms.filter(function (v) { return v._rlv === 2; }).length;
+    g.ridx = Math.max.apply(null, g.vms.map(function (v) { return v._ridx || 0; }));
     g.overReady = g.vms.filter(function (v) { return v.ready_max_pct >= RDY_WARN; }).length;
     g.costop = Math.max.apply(null, g.vms.map(function (v) { return v.cs_max_pct || 0; }));
     g.overCostop = g.vms.filter(function (v) { return v.cs_max_pct >= CS_WARN; }).length;
@@ -568,6 +600,7 @@ function sortVal(o, col) {
     case 'avgram': return o.avg_mem_pct || 0;
     case 'load': return o._idx != null ? o._idx : (o.idx || 0);
     case 'mempress': return o.memLv != null ? o.memLv : (memLevel(o) + 1) * 1000 + (o.mp_swap_max_mb || 0) + (o.mp_balloon_max_mb || 0) / 10 + (o.mp_lat_max_pct || 0);
+    case 'rdylv': return o._ridx != null ? o._ridx + (o._rlv + 1) * 1000 : (o.ridx || 0) + (o.rlv3 ? 3000 : o.rlv2 ? 2000 : 0);
     case 'costop': return o.costop != null ? o.costop : (o.cs_max_pct || 0);
     case 'limited': return o.limN != null ? o.limN : (o.lim_n || 0);
     case 'ready': return o.ready != null ? o.ready : (o.ready_max_pct || 0);
@@ -590,7 +623,7 @@ function th(label, col, extra) {
   return '<th class="sortable' + (extra ? ' ' + extra : '') + '" onclick="sortBy(\'' + col + '\')">' + label + ' <span style="opacity:.6">' + arrow + '</span></th>';
 }
 
-function readyHeads() { return readyOn() ? th('פיק CPU Ready', 'ready', 'center') + th('ממוצע Ready', 'avgready', 'center') + th('Co-Stop', 'costop', 'center') + th('Limit', 'limited', 'center') : ''; }
+function readyHeads() { return readyOn() ? th('מד Ready', 'rdylv', 'center') + th('פיק CPU Ready', 'ready', 'center') + th('ממוצע Ready', 'avgready', 'center') + th('Co-Stop', 'costop', 'center') + th('Limit', 'limited', 'center') : ''; }
 
 function vmRow(v, indent) {
   var tc = tCpu(), tr = tRam();
@@ -605,7 +638,7 @@ function vmRow(v, indent) {
     '<td class="center">' + pctHtml(v.max_mem_pct, tr) + '<span class="when">' + fmtWhen(v.max_mem_ts) + '</span></td>' +
     '<td class="center">' + pctHtml(v.avg_mem_pct, tr) + '</td>' +
     '<td class="center">' + lvBadge(v) + '</td>' +
-    (readyOn() ? '<td class="center">' + readyPeakHtml(v) + '</td><td class="center">' + readyAvgHtml(v) + '</td><td class="center">' + costopHtml(v) + '</td><td class="center">' + limitHtml(v) + '</td>' : '') +
+    (readyOn() ? '<td class="center">' + rdyBadge(v) + '</td><td class="center">' + readyPeakHtml(v) + '</td><td class="center">' + readyAvgHtml(v) + '</td><td class="center">' + costopHtml(v) + '</td><td class="center">' + limitHtml(v) + '</td>' : '') +
     (memOn() ? '<td class="center">' + memPressHtml(v) + '</td>' : '') +
     '<td colspan="3"></td></tr>';
   if (_chartOpen.has(k)) html += '<tr class="chart-row" id="chart-' + btoa(unescape(encodeURIComponent(k))).replace(/=/g, '') + '"><td colspan="13">⏳ טוען גרף...</td></tr>';
@@ -631,10 +664,10 @@ function render() {
   var rOn = readyOn();
   document.getElementById('k-rdy-card').style.display = rOn ? '' : 'none';
   if (rOn) {
-    var rw = vms.filter(function (v) { return v.ready_max_pct >= RDY_WARN; }).length;
-    var rc = vms.filter(function (v) { return v.ready_max_pct >= RDY_CRIT; }).length;
-    document.getElementById('k-rdy').textContent = rw;
-    document.getElementById('k-rdy-d').textContent = 'פיק ≥ 5% לכל vCPU · מתוכם ' + rc + ' קריטיים (≥ 10%)';
+    var rc = vms.filter(function (v) { return v._rlv === 3; }).length;
+    var rw = vms.filter(function (v) { return v._rlv === 2; }).length;
+    document.getElementById('k-rdy').textContent = rc + rw;
+    document.getElementById('k-rdy-d').textContent = 'Ready מתמשך · ' + rc + ' 🔴 בעייתיים · ' + rw + ' 🟠 לתשומת לב';
   }
   document.getElementById('k-lv3').textContent = vms.filter(function (v) { return v._lv === 3; }).length;
   document.getElementById('k-lv2').textContent = vms.filter(function (v) { return v._lv === 2; }).length;
@@ -674,6 +707,7 @@ function render() {
         '<td class="center">' + pctHtml(g.cpu, tc) + '</td><td></td>' +
         '<td class="center">' + pctHtml(g.ram, tr) + '</td><td></td>' +
         '<td class="center">' + (g.lv3 ? '<span class="lv lv-3">🔴 ' + g.lv3 + '</span> ' : '') + (g.lv2 ? '<span class="lv lv-2">🟠 ' + g.lv2 + '</span>' : (g.lv3 ? '' : '<span class="muted">—</span>')) + '</td>' +
+        (readyOn() ? '<td class="center">' + (g.rlv3 ? '<span class="lv lv-3">🔴 ' + g.rlv3 + '</span> ' : '') + (g.rlv2 ? '<span class="lv lv-2">🟠 ' + g.rlv2 + '</span>' : (g.rlv3 ? '' : '<span class="muted">—</span>')) + '</td>' : '') +
         (readyOn() ? '<td class="center">' + (g.overReady ? '<span class="pct rdy-' + rdyCls(g.ready) + '">' + r1(g.ready) + '%</span> <span class="muted" style="font-size:0.7rem">(' + g.overReady + ' שרתים)</span>' : '<span class="muted">—</span>') + '</td><td></td>' : '') +
         (readyOn() ? '<td class="center">' + (g.overCostop ? '<span class="pct warm">' + g.overCostop + ' שרתים</span>' : '<span class="muted">—</span>') + '</td><td class="center">' + (g.limN ? '<span class="pct hot">' + g.limN + ' שרתים</span>' : '<span class="muted">—</span>') + '</td>' : '') +
         (memOn() ? '<td class="center">' + (g.memBad ? '<span class="pct warm">' + g.memBad + ' שרתים</span>' : '<span class="muted">—</span>') + '</td>' : '') +
@@ -766,7 +800,7 @@ async function exportExcel(ev, onlyKey) {
   var wb = new ExcelJS.Workbook();
   var ws = wb.addWorksheet('ביצועים', { views: [{ rightToLeft: true, state: 'frozen', ySplit: 1 }] });
   var cols = ['לקוח', 'פריוריטי #', 'שם VM', 'סביבה', 'vCPU', 'RAM (GB)', 'פיק CPU %', 'זמן פיק CPU', 'ממוצע CPU %', 'פיק RAM %', 'זמן פיק RAM', 'ממוצע RAM %', 'דגימות', 'מד עומס', '% זמן CPU ≥85', '% זמן CPU ≥70', '% זמן RAM ≥85', '% זמן RAM ≥70', 'פירוט'];
-  if (readyOn()) cols.push('פיק CPU Ready % (לכל vCPU)', 'ממוצע CPU Ready %', 'דקות Ready ≥5%', 'דקות Ready ≥10%', 'Co-Stop מקס׳ %', 'דקות Limit');
+  if (readyOn()) cols.push('פיק CPU Ready % (לכל vCPU)', 'ממוצע CPU Ready %', 'דקות Ready ≥5%', 'דקות Ready ≥10%', 'Co-Stop מקס׳ %', 'דקות Limit', 'מד Ready');
   if (memOn()) cols.push('swap מקס׳ (MB)', 'Balloon מקס׳ (MB)', 'Memory Latency מקס׳ (%)');
   if (esxiOn()) cols.push('ESXi', 'עומס ESXi');
   ws.columns = cols.map(function (c) { return { header: c, width: Math.max(c.length + 4, 12) }; });
@@ -778,7 +812,7 @@ async function exportExcel(ev, onlyKey) {
       r1(v.max_cpu_pct), v.max_cpu_ts || '', r1(v.avg_cpu_pct), r1(v.max_mem_pct), v.max_mem_ts || '', r1(v.avg_mem_pct), v.samples,
       LV_LABEL[v._lv].replace(/^\S+\s/, ''),
       r1((v.cpu_n_high || 0) / (v.samples || 1) * 100), r1((v.cpu_n_mid || 0) / (v.samples || 1) * 100),
-      r1((v.mem_n_high || 0) / (v.samples || 1) * 100), r1((v.mem_n_mid || 0) / (v.samples || 1) * 100), v._why].concat(readyOn() ? [r1(v.ready_max_pct), r1(v.ready_avg_pct), v.ready_n_warn || 0, v.ready_n_crit || 0, r1(v.cs_max_pct), v.lim_n || 0] : []).concat(memOn() ? [r1(v.mp_swap_max_mb), r1(v.mp_balloon_max_mb), r1(v.mp_lat_max_pct)] : []).concat(esxiOn() ? (function () { var hh = hostOf(v); return hh ? [hh.name, HL_TXT[hh.level] + ' (CPU ' + hh.cpu_pct + '% · RAM ' + hh.mem_pct + '%)'] : ['', '']; })() : []));
+      r1((v.mem_n_high || 0) / (v.samples || 1) * 100), r1((v.mem_n_mid || 0) / (v.samples || 1) * 100), v._why].concat(readyOn() ? [r1(v.ready_max_pct), r1(v.ready_avg_pct), v.ready_n_warn || 0, v.ready_n_crit || 0, r1(v.cs_max_pct), v.lim_n || 0, LV_LABEL[v._rlv].replace(/^[^ ]+ /, '')] : []).concat(memOn() ? [r1(v.mp_swap_max_mb), r1(v.mp_balloon_max_mb), r1(v.mp_lat_max_pct)] : []).concat(esxiOn() ? (function () { var hh = hostOf(v); return hh ? [hh.name, HL_TXT[hh.level] + ' (CPU ' + hh.cpu_pct + '% · RAM ' + hh.mem_pct + '%)'] : ['', '']; })() : []));
     if (readyOn() && v.ready_max_pct >= RDY_WARN) row.getCell(20).font = { bold: true, color: { argb: v.ready_max_pct >= RDY_CRIT ? 'FFD1242F' : 'FFBF8700' } };
     if (v.max_cpu_pct >= tc) row.getCell(7).font = { bold: true, color: { argb: 'FFD1242F' } };
     if (v.max_mem_pct >= tr) row.getCell(10).font = { bold: true, color: { argb: 'FFD1242F' } };

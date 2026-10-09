@@ -187,6 +187,7 @@ def get_summary(since_bucket: str, table: str = "vm_perf_daily", env: Optional[s
                SUM(p.ready_sum) * 1.0 / NULLIF(SUM(p.ready_samples), 0) AS ready_avg_pct,
                SUM(p.ready_samples) AS ready_samples,
                SUM(p.ready_n_warn) AS ready_n_warn, SUM(p.ready_n_crit) AS ready_n_crit,
+               SUM(CASE WHEN p.ready_n_warn >= {hot_min} THEN 1 ELSE 0 END) AS ready_hot_buckets,
                MAX(p.mp_swap_max_mb) AS mp_swap_max_mb, MAX(p.mp_balloon_max_mb) AS mp_balloon_max_mb,
                MAX(p.mp_lat_max_pct) AS mp_lat_max_pct,
                (SELECT q.mp_lat_max_ts FROM {table} q WHERE q.environment=p.environment

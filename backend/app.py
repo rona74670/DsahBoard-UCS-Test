@@ -1288,16 +1288,32 @@ def _bk_clients():
     return {"PT": _pt_client, "Fattal": _fattal_client, "TC": _tc_client, "Lifesaver": _lifesaver_client}
 
 
+def _bk_name_variants(name: str) -> list:
+    """Lookup keys for a VM name, most specific first: the full name, the name without a trailing
+    description in parentheses ('RKT-DB (Rakuto Priority)' -> 'rkt-db'), and the short host name
+    without a DNS domain ('srv01.corp.local' -> 'srv01'). Veeam may know the VM or its agent under any of them."""
+    full = " ".join((name or "").lower().split())
+    out = [full]
+    cut = full.find("(")
+    base = full[:cut].strip() if cut > 0 else full
+    for v in (base, full.split(".")[0].strip(), base.split(".")[0].strip()):
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
 def _bk_object_ids(key: str, client) -> dict:
     import time as _t
     hit = _bk_obj_cache.get(key)
     if hit and _t.time() - hit[0] < _BK_OBJ_TTL:
         return hit[1]
     ids: dict = {}
-    for o in client.get_backup_objects(5000):
-        n = (o.get("name") or "").lower()
-        if n and o.get("id"):
-            ids.setdefault(n, o["id"])
+    objs = [o for o in client.get_backup_objects(5000) if o.get("name") and o.get("id")]
+    for o in objs:
+        ids.setdefault(" ".join(o["name"].lower().split()), o["id"])
+    for o in objs:                       # aliases: without a trailing "(...)" / without the DNS domain
+        for v in _bk_name_variants(o["name"])[1:]:
+            ids.setdefault(v, o["id"])
     _bk_obj_cache[key] = (_t.time(), ids)
     return ids
 
@@ -1402,8 +1418,8 @@ def api_vcenter_perf_backups(name: str, days: int = 7, debug: bool = False):
     from datetime import datetime, timedelta
     days = max(1, min(days, 183))
     since = datetime.now() - timedelta(days=days)
-    short = name.lower().split(".")[0]
-    out, errors, raw = [], {}, {}
+    variants = _bk_name_variants(name)
+    out, errors, raw, matched = [], {}, {}, {}
 
     def _one(key, factory):
         o = []
@@ -1415,7 +1431,11 @@ def api_vcenter_perf_backups(name: str, days: int = 7, debug: bool = False):
             else:
                 cli = factory()
                 ids = _bk_object_ids(key, cli)
-                oid = ids.get(name.lower()) or ids.get(short)
+                oid = None
+                for v in variants:
+                    if v in ids:
+                        oid, matched[key] = ids[v], v
+                        break
                 pts = cli.get_restore_points(oid) if oid else []
                 if pts:
                     bmap = _bk_backups_map(key, cli)
@@ -1471,6 +1491,8 @@ def api_vcenter_perf_backups(name: str, days: int = 7, debug: bool = False):
     res = {"vm": name, "points": out, "types": types, "errors": errors}
     if debug:
         res["raw_sample"] = raw
+        res["matched_by"] = matched
+        res["tried"] = variants
     return res
 
 
