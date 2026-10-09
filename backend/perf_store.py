@@ -24,6 +24,10 @@ BAND_HIGH = 85
 READY_WARN = 5
 READY_CRIT = 10
 # Host-side memory pressure (per VM): mem.latency is the % of time the VM waits for memory.
+# CPU Co-Stop (% per vCPU): above ~3% the VM has more vCPUs than it can use efficiently.
+COSTOP_WARN = 3
+COSTOP_CRIT = 5
+LIMITED_MIN = 1       # a minute counts as "limited" when held back >= 1% by a CPU limit
 MEM_LAT_WARN = 1
 MEM_LAT_CRIT = 5
 HOT_MIN_HOURLY = 5
@@ -44,6 +48,9 @@ _COLS = """
     mp_lat_max_pct REAL DEFAULT 0, mp_lat_max_ts TEXT DEFAULT '',
     mp_samples INTEGER DEFAULT 0, mp_n_balloon INTEGER DEFAULT 0,
     mp_n_swap INTEGER DEFAULT 0, mp_n_lat INTEGER DEFAULT 0,
+    cs_max_pct REAL DEFAULT 0, cs_max_ts TEXT DEFAULT '', cs_sum REAL DEFAULT 0,
+    cs_samples INTEGER DEFAULT 0, cs_n_warn INTEGER DEFAULT 0,
+    lim_max_pct REAL DEFAULT 0, lim_n INTEGER DEFAULT 0,
     PRIMARY KEY (environment, vm_name, bucket)
 """
 
@@ -67,7 +74,11 @@ def init_perf_tables() -> None:
                              ("mp_swap_max_mb", "REAL DEFAULT 0"), ("mp_balloon_max_mb", "REAL DEFAULT 0"),
                              ("mp_lat_max_pct", "REAL DEFAULT 0"), ("mp_lat_max_ts", "TEXT DEFAULT ''"),
                              ("mp_samples", "INTEGER DEFAULT 0"), ("mp_n_balloon", "INTEGER DEFAULT 0"),
-                             ("mp_n_swap", "INTEGER DEFAULT 0"), ("mp_n_lat", "INTEGER DEFAULT 0")):
+                             ("mp_n_swap", "INTEGER DEFAULT 0"), ("mp_n_lat", "INTEGER DEFAULT 0"),
+                             ("cs_max_pct", "REAL DEFAULT 0"), ("cs_max_ts", "TEXT DEFAULT ''"),
+                             ("cs_sum", "REAL DEFAULT 0"), ("cs_samples", "INTEGER DEFAULT 0"),
+                             ("cs_n_warn", "INTEGER DEFAULT 0"), ("lim_max_pct", "REAL DEFAULT 0"),
+                             ("lim_n", "INTEGER DEFAULT 0")):
                 if col not in have:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
 
@@ -83,8 +94,9 @@ def _upsert(conn, table: str, rows: list) -> None:
                              ready_max_pct, ready_max_ts, ready_sum, ready_samples,
                              ready_n_warn, ready_n_crit,
                              mp_swap_max_mb, mp_balloon_max_mb, mp_lat_max_pct, mp_lat_max_ts,
-                             mp_samples, mp_n_balloon, mp_n_swap, mp_n_lat)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                             mp_samples, mp_n_balloon, mp_n_swap, mp_n_lat,
+                             cs_max_pct, cs_max_ts, cs_sum, cs_samples, cs_n_warn, lim_max_pct, lim_n)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(environment, vm_name, bucket) DO UPDATE SET
             num_cpu     = excluded.num_cpu,
             mem_gb      = excluded.mem_gb,
@@ -116,7 +128,15 @@ def _upsert(conn, table: str, rows: list) -> None:
             mp_samples   = {table}.mp_samples   + excluded.mp_samples,
             mp_n_balloon = {table}.mp_n_balloon + excluded.mp_n_balloon,
             mp_n_swap    = {table}.mp_n_swap    + excluded.mp_n_swap,
-            mp_n_lat     = {table}.mp_n_lat     + excluded.mp_n_lat
+            mp_n_lat     = {table}.mp_n_lat     + excluded.mp_n_lat,
+            cs_max_ts    = CASE WHEN excluded.cs_max_pct > {table}.cs_max_pct
+                                THEN excluded.cs_max_ts ELSE {table}.cs_max_ts END,
+            cs_max_pct   = MAX({table}.cs_max_pct, excluded.cs_max_pct),
+            cs_sum       = {table}.cs_sum + excluded.cs_sum,
+            cs_samples   = {table}.cs_samples + excluded.cs_samples,
+            cs_n_warn    = {table}.cs_n_warn + excluded.cs_n_warn,
+            lim_max_pct  = MAX({table}.lim_max_pct, excluded.lim_max_pct),
+            lim_n        = {table}.lim_n + excluded.lim_n
     """, rows)
 
 
@@ -173,6 +193,12 @@ def get_summary(since_bucket: str, table: str = "vm_perf_daily", env: Optional[s
                   AND q.vm_name=p.vm_name AND q.bucket >= ? ORDER BY q.mp_lat_max_pct DESC LIMIT 1) AS mp_lat_max_ts,
                SUM(p.mp_samples) AS mp_samples, SUM(p.mp_n_balloon) AS mp_n_balloon,
                SUM(p.mp_n_swap) AS mp_n_swap, SUM(p.mp_n_lat) AS mp_n_lat,
+               MAX(p.cs_max_pct) AS cs_max_pct,
+               (SELECT q.cs_max_ts FROM {table} q WHERE q.environment=p.environment
+                  AND q.vm_name=p.vm_name AND q.bucket >= ? ORDER BY q.cs_max_pct DESC LIMIT 1) AS cs_max_ts,
+               SUM(p.cs_sum) * 1.0 / NULLIF(SUM(p.cs_samples), 0) AS cs_avg_pct,
+               SUM(p.cs_samples) AS cs_samples, SUM(p.cs_n_warn) AS cs_n_warn,
+               MAX(p.lim_max_pct) AS lim_max_pct, SUM(p.lim_n) AS lim_n,
                COUNT(*) AS buckets,
                SUM(CASE WHEN p.cpu_n_high >= {hot_min} THEN 1 ELSE 0 END) AS cpu_hot_buckets,
                SUM(CASE WHEN p.mem_n_high >= {hot_min} THEN 1 ELSE 0 END) AS mem_hot_buckets,
@@ -183,7 +209,7 @@ def get_summary(since_bucket: str, table: str = "vm_perf_daily", env: Optional[s
         GROUP BY p.environment, p.vm_name
     """
     with get_db() as conn:
-        rows = conn.execute(sql, [since_bucket, since_bucket, since_bucket, since_bucket] + params).fetchall()
+        rows = conn.execute(sql, [since_bucket] * 5 + params).fetchall()
     return [dict(r) for r in rows]
 
 

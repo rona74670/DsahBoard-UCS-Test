@@ -1145,6 +1145,53 @@ def collect_perf_samples(si) -> list:
 _ready_counter_ids: dict = {}   # vCenter instanceUuid -> counter id of cpu.ready.summation
 
 
+_cpu_extra_ids: dict = {}   # vCenter instanceUuid -> {"costop": id, "limited": id}
+
+
+def collect_cpu_extra(si, samples: list) -> None:
+    """Adds "costop_pct" and "limited_pct" (both % per vCPU, like CPU Ready) to each sample.
+
+    cpu.costop.summation   - ms the VM's vCPUs waited for sibling vCPUs to be scheduled together
+                             (high = too many vCPUs for what the VM needs / the host).
+    cpu.maxlimited.summation - ms the VM was held back by a CPU *limit* set on it.
+    Both are summed over all vCPUs per 20 s interval, so % per vCPU = ms / (20000 * numCPU) * 100.
+    Failures leave the samples untouched."""
+    content = si.RetrieveContent()
+    pm = content.perfManager
+    key = content.about.instanceUuid
+    ids = _cpu_extra_ids.get(key)
+    if ids is None:
+        by_name = {(c.groupInfo.key, c.nameInfo.key, str(c.rollupType)): c.key for c in pm.perfCounter}
+        ids = {"costop": by_name.get(("cpu", "costop", "summation")),
+               "limited": by_name.get(("cpu", "maxlimited", "summation"))}
+        _cpu_extra_ids[key] = ids
+    want = {cid: k for k, cid in ids.items() if cid is not None}
+    if not want:
+        return
+    by_obj = {s["_obj"]: s for s in samples if s.get("_obj") is not None}
+    objs = list(by_obj)
+    for i in range(0, len(objs), 150):
+        specs = [vim.PerformanceManager.QuerySpec(
+                     entity=o, intervalId=20, maxSample=3,
+                     metricId=[vim.PerformanceManager.MetricId(counterId=cid, instance="") for cid in want])
+                 for o in objs[i:i + 150]]
+        try:
+            res = pm.QueryPerf(querySpec=specs)
+        except Exception:
+            continue
+        for r in res or []:
+            s = by_obj.get(r.entity)
+            if not s or not s["num_cpu"]:
+                continue
+            for series in (r.value or []):
+                k = want.get(series.id.counterId)
+                vals = [v for v in (series.value or []) if v is not None and v >= 0]
+                if not k or not vals:
+                    continue
+                pct = round(sum(vals) / len(vals) / (20000.0 * s["num_cpu"]) * 100, 2)
+                s["costop_pct" if k == "costop" else "limited_pct"] = pct
+
+
 _mem_counter_ids: dict = {}   # vCenter instanceUuid -> {"swap": id, "balloon": id, "lat": id}
 
 

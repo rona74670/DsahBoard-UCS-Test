@@ -122,7 +122,7 @@
         <option value="">הכל</option><option value="3">רק בעייתיים</option><option value="2">לתשומת לב ומעלה</option>
       </select>
     </label>
-    <label title="מוסיף עמודות CPU Ready (פיק וממוצע, לכל vCPU) ואזהרות. תקין &lt; 5%, אזהרה 5–10%, קריטי ≥ 10%"><input type="checkbox" id="f-ready" onchange="saveReady();render()" /> &#x23F1; הצג CPU Ready</label>
+    <label title="מוסיף עמודות CPU Ready (פיק וממוצע, לכל vCPU) ואזהרות. תקין &lt; 5%, אזהרה 5–10%, קריטי ≥ 10%"><input type="checkbox" id="f-ready" onchange="saveReady();render()" /> &#x23F1; הצג CPU Ready / Co-Stop</label>
     <label title="מוסיף עמודת לחץ זיכרון מצד ה-host: swap (זיכרון שנזרק לדיסק), Balloon (זיכרון שנגזל), ו-Memory Latency (% זמן המתנה לזיכרון). כל ערך מעל 0 ב-swap/balloon מעיד שה-host מצר את השרת"><input type="checkbox" id="f-mem" onchange="saveMem();render()" /> &#x1F9E0; הצג לחץ זיכרון</label>
     <label title="מוסיף עמודה עם ה-ESXi שהשרת יושב עליו, וכרטיס עומס רגעי של ה-ESXi בפתיחת השרת (נתון חי, לא נשמר ולא מופיע בגרף)"><input type="checkbox" id="f-esxi" onchange="saveEsxi();loadHosts().then(render)" /> &#x1F5A5; הצג ESXi (עומס רגעי)</label>
     <label title="בפתיחת שרת מציג לייטנסי / IOPS / קצב של כל דיסק שלו (נקרא חי מ-vCenter, 5 דקות אחרונות; לא נשמר ולא בגרף)"><input type="checkbox" id="f-disk" onchange="saveDisk();render()" /> &#x1F4BD; הצג לייטנסי דיסקים</label>
@@ -154,6 +154,8 @@
       <details><summary>⏱ CPU Ready — כשהשרת מחכה למעבד</summary><dl>
         <dt>מה זה</dt><dd>אחוז הזמן שהשרת <b>רצה לעבוד אבל חיכה בתור</b> למעבד פיזי פנוי על ה-ESXi. נמדד לכל vCPU.</dd>
         <dt>איך קוראים את זה</dt><dd>🟢 מתחת ל-5% תקין · 🟠 5–10% אזהרה · 🔴 10% ומעלה קריטי (השרת מרגיש איטי).</dd>
+        <dt>Co-Stop</dt><dd>שרת עם כמה vCPUs: ESXi חייב להריץ אותם <b>ביחד</b>, ולכן vCPU שסיים מחכה לשאר. זה הזמן (באחוזים) שהשרת מחכה כך. <b>מ-3% ומעלה = יש לשרת יותר vCPUs ממה שהוא צריך, וזה מאט אותו.</b> הפתרון: להפחית vCPUs. הוספת vCPUs רק מחמירה.</dd>
+        <dt>Limit</dt><dd>אם מישהו הגדיר ב-vCenter <b>הגבלה (Limit)</b> על ה-CPU של השרת, הוא נחסם גם כשה-host פנוי. 🔴 = השרת נחסם (מספר הדקות), 🟢 = אין הגבלה. הפתרון: להסיר את ה-Limit.</dd>
         <dt>ההבדל מ-CPU %</dt><dd>CPU % גבוה = השרת עובד קשה. <b>Ready גבוה = ה-host עמוס מדי</b>, גם אם ה-CPU % של השרת נראה נמוך. זה הסימן הקלאסי ל"שרת איטי בלי בעיית משאבים".</dd>
       </dl></details>
 
@@ -192,9 +194,61 @@
         <dt>"לא נמצא גיבוי לשרת"</dt><dd>לא נמצא אף גיבוי של השרת בשרתי הגיבוי בטווח הזה. אם מופיע "לא ענו", אחד משרתי הגיבוי לא הגיב בזמן.</dd>
       </dl></details>
 
+      <details><summary>🛠 מה לעשות כשמדד חריג — מה לבדוק ומה מומלץ</summary><dl>
+        <dt>CPU % גבוה לאורך זמן</dt><dd>
+          1. הסתכל בתוך השרת איזה תהליך צורך את המעבד (Task Manager ב-Windows, top ב-Linux). לפעמים זו משימה זמנית (עדכון, אנטי-וירוס, גיבוי).<br>
+          2. בדוק ב"מד עומס" אם זה חוזר או חד-פעמי, ובגרף אם זה מתיישר עם קו כתום (גיבוי).<br>
+          3. אם הוא גבוה <b>ו-CPU Ready ו-Co-Stop תקינים</b> → השרת באמת צריך יותר: שקול להוסיף vCPU (בזהירות, 1–2 בכל פעם). אם אחד מהם גבוה → <b>אל תוסיף</b> vCPU (ראה למטה).</dd>
+        <dt>RAM % גבוה</dt><dd>
+          1. זה זיכרון פעיל, לא בהכרח "נגמר". בדוק את "לחץ זיכרון": אם ירוק, כנראה בסדר.<br>
+          2. בתוך השרת: בדוק שימוש ב-pagefile / swap. אם משתמש בהם הרבה → חסר זיכרון ל-VM, שקול להוסיף RAM.<br>
+          3. שרתי DB (SQL, Oracle, Sybase) מנצלים את כל הזיכרון בכוונה, ולכן RAM גבוה אצלם בדרך כלל תקין.</dd>
+        <dt>CPU Ready גבוה (מ-5%)</dt><dd>
+          1. פתח את כרטיס ה-ESXi: האם ה-host עמוס (CPU, יחס vCPU:ליבה)?<br>
+          2. הפתרון הרגיל: <b>להעביר את השרת (vMotion) ל-host פנוי יותר</b>, או להעביר ממנו שרתים אחרים.<br>
+          3. בדוק את "הכי עמוסים על ה-ESXi": אם יש שכן אחד שצורך הרבה, הוא כנראה הסיבה.<br>
+          4. אל תוסיף vCPU לשרת כזה, זה מחמיר את ההמתנה.</dd>
+        <dt>Co-Stop גבוה (מ-3%)</dt><dd>
+          לשרת יש יותר vCPUs ממה שהוא צריך. <b>הפחת vCPUs</b> (התחל בהורדה של 1–2, ובדוק אחרי כמה ימים), בעיקר בשרתים עם הרבה vCPUs ועומס נמוך. זה בדרך כלל גם משפר את הביצועים ולא מוריד אותם.</dd>
+        <dt>Limit על ה-CPU (🔴 בעמודת Limit)</dt><dd>
+          ב-vCenter: Edit Settings של השרת ← CPU ← Limit, והחזר ל-<b>Unlimited</b>. בדוק גם אם יש Limit על ה-Resource Pool שהשרת נמצא בו. זה מסביר שרת איטי גם כשה-host פנוי לגמרי.</dd>
+        <dt>Swap או Balloon (לחץ זיכרון)</dt><dd>
+          1. בדוק ב-vCenter אם הוגדר ל-VM <b>Memory Limit</b>, זה גורם ל-Balloon/Swap גם כשה-host פנוי. אם כן, הסר אותו.<br>
+          2. אחרת ה-host עצמו חסר זיכרון: בדוק את ה-RAM של ה-ESXi בכרטיס. העבר שרתים ל-host אחר או הוסף זיכרון ל-host.<br>
+          3. Swap דחוף יותר מ-Balloon. אם זה קורה לשרתים חשובים, טפל באותו יום.</dd>
+        <dt>Memory Latency גבוה</dt><dd>
+          השרת מחכה לזיכרון שנדחס או נזרק לדיסק. אותו טיפול כמו Swap/Balloon: בדוק Memory Limit על ה-VM, ואז את הזיכרון של ה-host.</dd>
+        <dt>ESXi עמוס (🟠/🔴 בעמודת ESXi)</dt><dd>
+          1. פתח את הכרטיס וראה מה הסיבה (CPU, RAM, Ready, יחס vCPU:ליבה, Swap).<br>
+          2. <b>איזון:</b> העבר שרתים עמוסים ל-hosts פנויים (vMotion). בדוק אם DRS מופעל ופועל ב-cluster.<br>
+          3. אם כל ה-hosts עמוסים, צריך להוסיף host או להקטין שרתים.<br>
+          4. יחס vCPU:ליבה מעל 4:1 — הפחת vCPUs מיותרים בשרתים שעליו.</dd>
+        <dt>לייטנסי דיסק גבוה (מ-20ms)</dt><dd>
+          1. השווה בין הדיסקים של אותו שרת ושל שרתים אחרים על אותו Datastore: אם <b>כולם</b> איטיים → בעיה באחסון / ברשת ה-FC/iSCSI; אם רק אחד → משהו אצל השרת עצמו.<br>
+          2. בדוק <b>Snapshots פתוחים</b> על השרת (ב-vCenter ← Snapshots). snapshot ישן מאט משמעותית.<br>
+          3. בדוק אם זה מתיישר עם גיבוי (קו כתום) או עם שרת אחר שעושה הרבה I/O (IOPS / MB/s גבוהים) על אותו Datastore.<br>
+          4. אם האחסון עצמו עמוס, בדוק את ה-iBox.</dd>
+        <dt>עומס שמתיישר עם גיבוי (קו כתום)</dt><dd>
+          שקול להזיז את חלון הגיבוי לשעה שקטה, להגביל את קצב הגיבוי ב-Veeam, או לפזר את הגיבויים של שרתים עמוסים על פני זמנים שונים.</dd>
+        <dt>פיק חד-פעמי (⚪)</dt><dd>
+          לרוב אין צורך לטפל. רק עקוב: אם זה חוזר, יהפוך ל-🟠 או ל-🔴.</dd>
+        <dt>"אין נתון חי" ב-ESXi / "—" במדד</dt><dd>
+          השרת כבוי, או שהאיסוף עוד לא צבר נתונים (מדדים חדשים מתחילים מהרגע שהופעלו). נסה שוב אחרי כמה דקות.</dd>
+      </dl></details>
+
+      <details><summary>📐 Right-Sizing — מה השתנה עם Co-Stop ו-Limit</summary><dl>
+        <dt>מה זה Right-Sizing</dt><dd>דף נפרד שממליץ על שינוי כמות ה-vCPU וה-RAM של שרת, לפי הפיקים שחוזרים על עצמם לאורך זמן (לא פיק חד-פעמי). הוא ממליץ רק אחרי שנצברו מספיק ימי נתונים.</dd>
+        <dt>מה Co-Stop ו-Limit משנים</dt><dd>
+          <b>Limit</b> על ה-CPU (לפחות 2 ימים) → ההמלצה היא "לבדוק": קודם להסיר את ה-Limit, כי שינוי vCPU לא יעזור.<br>
+          <b>Co-Stop חוזר</b> (לפחות 3 ימי נתונים) על שרת עם 3 vCPUs ומעלה:<br>
+          &nbsp;• אם ה-CPU אמר "להוסיף" → "לבדוק": הוספה תחמיר, בדוק את עומס ה-host.<br>
+          &nbsp;• אחרת → המלצה <b>להפחית</b> כרבע מה-vCPUs (למספר זוגי), כי השרת לא מנצל אותם.</dd>
+        <dt>איך לטפל בהמלצה "לבדוק"</dt><dd>קרא את הסיבה שמופיעה מתחת לשורה, ובצע לפי הסעיפים "Limit" ו-"Co-Stop" למעלה. אחרי שינוי, תן לשרת כמה ימים וראה שהמדדים השתפרו.</dd>
+      </dl></details>
+
       <details><summary>🔎 טיפ: איך מגלים למה שרת איטי</summary><dl>
         <dd>1. <b>CPU % / RAM %</b> של השרת גבוהים? → השרת עצמו צריך יותר משאבים.<br>
-            2. <b>CPU Ready</b> גבוה? → ה-host עמוס, כנראה יותר מדי שרתים עליו.<br>
+            2. <b>CPU Ready</b> גבוה? → ה-host עמוס, כנראה יותר מדי שרתים עליו. <b>Co-Stop</b> גבוה? → לשרת יותר מדי vCPUs. <b>Limit</b> 🔴? → יש הגבלה על ה-CPU שלו.<br>
             3. <b>לחץ זיכרון</b> (swap / balloon)? → ל-host חסר זיכרון.<br>
             4. <b>לייטנסי דיסק</b> גבוה? → בעיה באחסון.<br>
             5. <b>קווים כתומים</b> בזמן הקפיצה? → הגיבוי גרם לעומס.<br>
@@ -359,6 +413,19 @@ function closeHelp() { document.getElementById('help-back').style.display = 'non
 document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closeHelp(); });
 function loadReady() { try { document.getElementById('f-ready').checked = localStorage.getItem('perf-ready') === '1'; } catch (x) {} }
 function saveReady() { try { localStorage.setItem('perf-ready', readyOn() ? '1' : '0'); } catch (x) {} }
+// ── CPU Co-Stop (too many vCPUs: P%/vCPU, >=3 warn, >=5 crit) and CPU Limit (VM held back by a configured limit) ──
+var CS_WARN = 3, CS_CRIT = 5;
+function costopHtml(v) {
+  if (!v.cs_samples) return '<span class="muted">—</span>';
+  var p = v.cs_max_pct || 0, cls = p >= CS_CRIT ? 'hot' : (p >= CS_WARN ? 'warm' : 'ok');
+  return '<span class="pct ' + cls + '" title="ממוצע ' + r1(v.cs_avg_pct) + '% · ' + (v.cs_n_warn || 0) + ' דקות ≥ ' + CS_WARN + '% (תקין &lt; 3% לכל vCPU)">' + r1(p) + '%</span>' +
+    '<span class="when">' + fmtWhen(v.cs_max_ts) + '</span>';
+}
+function limitHtml(v) {
+  if (!v.cs_samples) return '<span class="muted">—</span>';
+  if (v.lim_n > 0) return '<span class="pct hot" title="השרת נחסם על ידי Limit שהוגדר ל-CPU שלו (שיא ' + r1(v.lim_max_pct) + '%)">🔴 ' + v.lim_n + ' דק׳</span>';
+  return '<span class="pct ok" title="אין Limit שחוסם את השרת">🟢</span>';
+}
 function rdyCls(p) { return p >= RDY_CRIT ? 'crit' : (p >= RDY_WARN ? 'warn' : 'ok'); }
 function readyPeakHtml(v) {
   if (!v.ready_samples) return '<span class="muted">—</span>';
@@ -458,7 +525,7 @@ function filtered() {
     if (cu && (v.sap_number || '__nosap__') !== cu) return false;
     if (q && !((v.vm_name || '').toLowerCase().includes(q) || (v.sap_number || '').toLowerCase().includes(q) ||
                (_customerMap[v.sap_number] || '').toLowerCase().includes(q))) return false;
-    if (over && !(v.max_cpu_pct >= tc || v.max_mem_pct >= tr || (readyOn() && v.ready_max_pct >= RDY_WARN) || (memOn() && memLevel(v) >= 1))) return false;
+    if (over && !(v.max_cpu_pct >= tc || v.max_mem_pct >= tr || (readyOn() && (v.ready_max_pct >= RDY_WARN || v.cs_max_pct >= CS_WARN || v.lim_n > 0)) || (memOn() && memLevel(v) >= 1))) return false;
     if (lvMin && v._lv < lvMin) return false;
     return true;
   });
@@ -482,6 +549,9 @@ function buildGroups(vms) {
     g.overRam = g.vms.filter(function (v) { return v.max_mem_pct >= tr; }).length;
     g.ready = Math.max.apply(null, g.vms.map(function (v) { return v.ready_max_pct || 0; }));
     g.overReady = g.vms.filter(function (v) { return v.ready_max_pct >= RDY_WARN; }).length;
+    g.costop = Math.max.apply(null, g.vms.map(function (v) { return v.cs_max_pct || 0; }));
+    g.overCostop = g.vms.filter(function (v) { return v.cs_max_pct >= CS_WARN; }).length;
+    g.limN = g.vms.filter(function (v) { return v.lim_n > 0; }).length;
     g.memBad = g.vms.filter(function (v) { return memLevel(v) >= 1; }).length;
     g.memLv = g.vms.length ? Math.max.apply(null, g.vms.map(function (v) { return (memLevel(v) + 1) * 1000; })) + g.memBad : 0;
     return g;
@@ -498,6 +568,8 @@ function sortVal(o, col) {
     case 'avgram': return o.avg_mem_pct || 0;
     case 'load': return o._idx != null ? o._idx : (o.idx || 0);
     case 'mempress': return o.memLv != null ? o.memLv : (memLevel(o) + 1) * 1000 + (o.mp_swap_max_mb || 0) + (o.mp_balloon_max_mb || 0) / 10 + (o.mp_lat_max_pct || 0);
+    case 'costop': return o.costop != null ? o.costop : (o.cs_max_pct || 0);
+    case 'limited': return o.limN != null ? o.limN : (o.lim_n || 0);
     case 'ready': return o.ready != null ? o.ready : (o.ready_max_pct || 0);
     case 'avgready': return o.ready_avg_pct || 0;
     case 'overCpu': return o.overCpu || 0;
@@ -518,7 +590,7 @@ function th(label, col, extra) {
   return '<th class="sortable' + (extra ? ' ' + extra : '') + '" onclick="sortBy(\'' + col + '\')">' + label + ' <span style="opacity:.6">' + arrow + '</span></th>';
 }
 
-function readyHeads() { return readyOn() ? th('פיק CPU Ready', 'ready', 'center') + th('ממוצע Ready', 'avgready', 'center') : ''; }
+function readyHeads() { return readyOn() ? th('פיק CPU Ready', 'ready', 'center') + th('ממוצע Ready', 'avgready', 'center') + th('Co-Stop', 'costop', 'center') + th('Limit', 'limited', 'center') : ''; }
 
 function vmRow(v, indent) {
   var tc = tCpu(), tr = tRam();
@@ -533,7 +605,7 @@ function vmRow(v, indent) {
     '<td class="center">' + pctHtml(v.max_mem_pct, tr) + '<span class="when">' + fmtWhen(v.max_mem_ts) + '</span></td>' +
     '<td class="center">' + pctHtml(v.avg_mem_pct, tr) + '</td>' +
     '<td class="center">' + lvBadge(v) + '</td>' +
-    (readyOn() ? '<td class="center">' + readyPeakHtml(v) + '</td><td class="center">' + readyAvgHtml(v) + '</td>' : '') +
+    (readyOn() ? '<td class="center">' + readyPeakHtml(v) + '</td><td class="center">' + readyAvgHtml(v) + '</td><td class="center">' + costopHtml(v) + '</td><td class="center">' + limitHtml(v) + '</td>' : '') +
     (memOn() ? '<td class="center">' + memPressHtml(v) + '</td>' : '') +
     '<td colspan="3"></td></tr>';
   if (_chartOpen.has(k)) html += '<tr class="chart-row" id="chart-' + btoa(unescape(encodeURIComponent(k))).replace(/=/g, '') + '"><td colspan="13">⏳ טוען גרף...</td></tr>';
@@ -603,6 +675,7 @@ function render() {
         '<td class="center">' + pctHtml(g.ram, tr) + '</td><td></td>' +
         '<td class="center">' + (g.lv3 ? '<span class="lv lv-3">🔴 ' + g.lv3 + '</span> ' : '') + (g.lv2 ? '<span class="lv lv-2">🟠 ' + g.lv2 + '</span>' : (g.lv3 ? '' : '<span class="muted">—</span>')) + '</td>' +
         (readyOn() ? '<td class="center">' + (g.overReady ? '<span class="pct rdy-' + rdyCls(g.ready) + '">' + r1(g.ready) + '%</span> <span class="muted" style="font-size:0.7rem">(' + g.overReady + ' שרתים)</span>' : '<span class="muted">—</span>') + '</td><td></td>' : '') +
+        (readyOn() ? '<td class="center">' + (g.overCostop ? '<span class="pct warm">' + g.overCostop + ' שרתים</span>' : '<span class="muted">—</span>') + '</td><td class="center">' + (g.limN ? '<span class="pct hot">' + g.limN + ' שרתים</span>' : '<span class="muted">—</span>') + '</td>' : '') +
         (memOn() ? '<td class="center">' + (g.memBad ? '<span class="pct warm">' + g.memBad + ' שרתים</span>' : '<span class="muted">—</span>') + '</td>' : '') +
         '<td class="center" style="font-weight:700">' + g.vms.length + '</td>' +
         '<td class="center">' + (g.overCpu ? '<span class="pct hot">' + g.overCpu + '</span>' : '<span class="muted">0</span>') + '</td>' +
@@ -693,7 +766,7 @@ async function exportExcel(ev, onlyKey) {
   var wb = new ExcelJS.Workbook();
   var ws = wb.addWorksheet('ביצועים', { views: [{ rightToLeft: true, state: 'frozen', ySplit: 1 }] });
   var cols = ['לקוח', 'פריוריטי #', 'שם VM', 'סביבה', 'vCPU', 'RAM (GB)', 'פיק CPU %', 'זמן פיק CPU', 'ממוצע CPU %', 'פיק RAM %', 'זמן פיק RAM', 'ממוצע RAM %', 'דגימות', 'מד עומס', '% זמן CPU ≥85', '% זמן CPU ≥70', '% זמן RAM ≥85', '% זמן RAM ≥70', 'פירוט'];
-  if (readyOn()) cols.push('פיק CPU Ready % (לכל vCPU)', 'ממוצע CPU Ready %', 'דקות Ready ≥5%', 'דקות Ready ≥10%');
+  if (readyOn()) cols.push('פיק CPU Ready % (לכל vCPU)', 'ממוצע CPU Ready %', 'דקות Ready ≥5%', 'דקות Ready ≥10%', 'Co-Stop מקס׳ %', 'דקות Limit');
   if (memOn()) cols.push('swap מקס׳ (MB)', 'Balloon מקס׳ (MB)', 'Memory Latency מקס׳ (%)');
   if (esxiOn()) cols.push('ESXi', 'עומס ESXi');
   ws.columns = cols.map(function (c) { return { header: c, width: Math.max(c.length + 4, 12) }; });
@@ -705,7 +778,7 @@ async function exportExcel(ev, onlyKey) {
       r1(v.max_cpu_pct), v.max_cpu_ts || '', r1(v.avg_cpu_pct), r1(v.max_mem_pct), v.max_mem_ts || '', r1(v.avg_mem_pct), v.samples,
       LV_LABEL[v._lv].replace(/^\S+\s/, ''),
       r1((v.cpu_n_high || 0) / (v.samples || 1) * 100), r1((v.cpu_n_mid || 0) / (v.samples || 1) * 100),
-      r1((v.mem_n_high || 0) / (v.samples || 1) * 100), r1((v.mem_n_mid || 0) / (v.samples || 1) * 100), v._why].concat(readyOn() ? [r1(v.ready_max_pct), r1(v.ready_avg_pct), v.ready_n_warn || 0, v.ready_n_crit || 0] : []).concat(memOn() ? [r1(v.mp_swap_max_mb), r1(v.mp_balloon_max_mb), r1(v.mp_lat_max_pct)] : []).concat(esxiOn() ? (function () { var hh = hostOf(v); return hh ? [hh.name, HL_TXT[hh.level] + ' (CPU ' + hh.cpu_pct + '% · RAM ' + hh.mem_pct + '%)'] : ['', '']; })() : []));
+      r1((v.mem_n_high || 0) / (v.samples || 1) * 100), r1((v.mem_n_mid || 0) / (v.samples || 1) * 100), v._why].concat(readyOn() ? [r1(v.ready_max_pct), r1(v.ready_avg_pct), v.ready_n_warn || 0, v.ready_n_crit || 0, r1(v.cs_max_pct), v.lim_n || 0] : []).concat(memOn() ? [r1(v.mp_swap_max_mb), r1(v.mp_balloon_max_mb), r1(v.mp_lat_max_pct)] : []).concat(esxiOn() ? (function () { var hh = hostOf(v); return hh ? [hh.name, HL_TXT[hh.level] + ' (CPU ' + hh.cpu_pct + '% · RAM ' + hh.mem_pct + '%)'] : ['', '']; })() : []));
     if (readyOn() && v.ready_max_pct >= RDY_WARN) row.getCell(20).font = { bold: true, color: { argb: v.ready_max_pct >= RDY_CRIT ? 'FFD1242F' : 'FFBF8700' } };
     if (v.max_cpu_pct >= tc) row.getCell(7).font = { bold: true, color: { argb: 'FFD1242F' } };
     if (v.max_mem_pct >= tr) row.getCell(10).font = { bold: true, color: { argb: 'FFD1242F' } };

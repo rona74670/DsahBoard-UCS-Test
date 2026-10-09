@@ -25,6 +25,12 @@ DEFAULTS = {
     "min_samples_per_day": 360,   # >= 6 h of 1-minute samples for a day to count
 }
 
+# CPU contention signals (collected from the day the feature went live, so they usually cover fewer
+# days than the CPU/RAM peaks - they only act once they have at least CS_MIN_DAYS of data).
+CS_MIN_DAYS = 3
+CS_P95_WARN = 3.0      # P95 of the daily Co-Stop peak (% per vCPU) above which the VM has too many vCPUs
+LIMIT_MIN_DAYS = 2     # days with a CPU limit holding the VM back before we flag it
+
 
 # Database-style servers deliberately use every GB they are given (SQL buffer pool, Oracle SGA,
 # caches ...), so a low "active memory" peak says nothing about how much RAM they need - cutting
@@ -79,7 +85,8 @@ def _load_rows(days: int, env: Optional[str]) -> list:
         params.append(env)
     sql = f"""
         SELECT p.environment, p.vm_name, p.bucket, p.num_cpu, p.mem_gb,
-               p.max_cpu_pct, p.max_mem_pct, p.samples, COALESCE(s.sap_number,'') AS sap_number
+               p.max_cpu_pct, p.max_mem_pct, p.samples, p.cs_max_pct, p.cs_samples, p.lim_n,
+               COALESCE(s.sap_number,'') AS sap_number
         FROM vm_perf_daily p
         LEFT JOIN vm_sap_cache s ON s.vm_name = p.vm_name AND LOWER(s.environment) = LOWER(p.environment)
         WHERE {' AND '.join(where)}
@@ -87,6 +94,38 @@ def _load_rows(days: int, env: Optional[str]) -> list:
     """
     with get_db() as conn:
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+def _cpu_contention(cur, out, days_rows):
+    """Applies the Co-Stop / CPU-limit signals to a trusted CPU recommendation (mutates out).
+
+    - A CPU *limit* that held the VM back on LIMIT_MIN_DAYS+ days: no vCPU change helps -> action "limited".
+    - Recurring Co-Stop (P95 of daily peaks >= CS_P95_WARN) on a VM with >= 3 vCPUs: it has more vCPUs than
+      it can use. If CPU peaks already said "add", adding vCPUs would make it worse -> action "contention";
+      otherwise recommend fewer vCPUs (about -25%)."""
+    lim_days = sum(1 for d in days_rows if (d.get("lim_n") or 0) > 0)
+    cs_vals = [d.get("cs_max_pct") or 0.0 for d in days_rows if (d.get("cs_samples") or 0) > 0]
+    out["limited_days"] = lim_days
+    out["costop_days"] = len(cs_vals)
+    out["costop_p95"] = round(_p95(cs_vals), 1) if cs_vals else None
+    if lim_days >= LIMIT_MIN_DAYS:
+        out.update(action="limited", recommended=cur, delta=0,
+                   reason="הוגדר Limit על ה-CPU של השרת (נחסם ב-%d ימים). להסיר את ה-Limit לפני כל שינוי ב-vCPU" % lim_days)
+        return
+    if len(cs_vals) >= CS_MIN_DAYS and out["costop_p95"] >= CS_P95_WARN and cur >= 3:
+        if out["action"] == "add":
+            out.update(action="contention", recommended=cur, delta=0,
+                       reason="CPU גבוה אבל גם Co-Stop חוזר (P95 %s%%): יש יותר מדי vCPUs, הוספה תחמיר. לבדוק את עומס ה-host במקום" % out["costop_p95"])
+        else:
+            rec = max(2, cur - max(1, cur // 4))
+            if rec >= 3:
+                rec -= rec % 2             # keep an even vCPU count (NUMA friendly)
+            if out["action"] == "reduce" and out["recommended"] <= rec:
+                out["reason"] = "Co-Stop חוזר (P95 %s%%) מחזק את ההמלצה להפחית vCPUs" % out["costop_p95"]
+                return
+            if rec < cur:
+                out.update(action="reduce", recommended=rec, delta=round(rec - cur, 1),
+                           reason="Co-Stop חוזר (P95 %s%%): יותר vCPUs ממה שהשרת מנצל, וזה מאט אותו" % out["costop_p95"])
 
 
 def _resource(cur, days_rows, key, target, min_days, kind, protect_reason=""):
@@ -124,6 +163,8 @@ def _resource(cur, days_rows, key, target, min_days, kind, protect_reason=""):
     out["recommended"] = rec
     out["delta"] = round(rec - cur, 1)
     out["action"] = "add" if rec > cur else ("reduce" if rec < cur else "ok")
+    if kind == "cpu":
+        _cpu_contention(cur, out, days_rows)
     return out
 
 

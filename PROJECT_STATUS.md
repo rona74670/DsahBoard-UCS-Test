@@ -561,10 +561,23 @@ Get-Service     UcsDashboard
 - **מגבלה:** מזהה רק לחץ שה-host גורם. VM שמוגדר קטן מדי לאפליקציה (paging בתוך מערכת ההפעלה) לא נראה מ-vCenter — דורש מדדי guest (למשל PRTG).
 - **לא נבדק מול vCenter אמיתי.**
 
+### CPU Co-Stop ו-CPU Limit + שילוב ב-Right-Sizing (גרסה 4.11)
+- **איסוף:** `collect_cpu_extra` ב-[vcenter_client.py](backend/vcenter_client.py) — `cpu.costop.summation` ו-`cpu.maxlimited.summation` (realtime 20 שנ', אותה נוסחה כמו Ready: ms / (20000 × vCPU) × 100).
+  **Co-Stop** = זמן ש-vCPUs ממתינים לאחיהם (≥3% = יותר מדי vCPUs; `COSTOP_WARN/CRIT`). **Limit** = השרת נחסם ע"י CPU Limit שהוגדר עליו (`LIMITED_MIN`=1%).
+- **DB:** עמודות `cs_max_pct, cs_max_ts, cs_sum, cs_samples, cs_n_warn, lim_max_pct, lim_n` ב-roll-ups (acc 25–31; migration אוטומטי). מצטבר מרגע ההפעלה.
+- **דף ביצועים:** תחת צ'קבוקס `הצג CPU Ready / Co-Stop` נוספו עמודות Co-Stop ו-Limit (+ Excel, סינון "עברו סף", שורת לקוח, חלון ההסבר).
+- **Right-Sizing** ([perf_rightsizing.py](backend/perf_rightsizing.py), `_cpu_contention`) — פועל רק על המלצת CPU מהימנה (≥ `min_days`), ורק כשיש ≥3 ימי נתוני Co-Stop:
+  - **Limit** על ≥2 ימים → פעולה `limited` ("להסיר Limit לפני כל שינוי"), בלי המלצת vCPU.
+  - **Co-Stop חוזר** (P95 של שיא יומי ≥3%) על VM עם ≥3 vCPU: אם ה-CPU אמר "להוסיף" → `contention` (הוספה תחמיר; לבדוק את ה-host); אחרת → **להפחית** כ-25% (מספר זוגי), או מחזק המלצת הפחתה קיימת.
+  - ב-UI ([vcenter_rightsizing.html](frontend/vcenter_rightsizing.html)) שתי הפעולות מוצגות כ-`לבדוק (Co-Stop / Limit)` (כתום) עם הסיבה מתחת, ויש אופציה בסינון.
+  - Co-Stop לא משנה כלום עד שיש 3 ימים; ביחס ל-14 ימי ה-CPU הנדרשים, הוא יהיה מוכן באותו זמן.
+- **לא נבדק מול vCenter אמיתי** (נבדקה הלוגיקה של ה-right-sizing בבדיקה מבודדת בלבד).
+
 ### חלון הסבר על המדדים (גרסה 4.11)
 - כפתור `❓ הסבר על המדדים` בסרגל דף הביצועים פותח חלון (HTML סטטי ב-`vcenter_perf.html`, `#help-back`; נסגר ב-Esc / לחיצה בחוץ) עם הסבר פשוט בעברית לכל המדדים:
   CPU/RAM/פיק/ממוצע/מד עומס, CPU Ready, לחץ זיכרון, ESXi, דיסקים, הגרף וסימוני הגיבוי, ו"איך מגלים למה שרת איטי".
   **כשמשנים סף או מוסיפים מדד — לעדכן גם את החלון.**
+  החלון כולל גם סעיף "🛠 מה לעשות כשמדד חריג" (מה לבדוק ומה מומלץ לכל מדד), וסעיף על Co-Stop/Limit ב-Right-Sizing.
 
 ### Deploy
 - אחרי שינוי backend צריך `Restart-Service UcsDashboard` כמנהל; אחרי ההפעלה מחדש יש להתחבר מחדש לדשבורד.

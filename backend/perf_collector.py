@@ -17,7 +17,7 @@ from datetime import datetime
 from pyVim.connect import Disconnect
 
 import perf_store
-from vcenter_client import collect_cpu_ready, collect_host_live, collect_mem_pressure, collect_perf_samples, open_session
+from vcenter_client import collect_cpu_extra, collect_cpu_ready, collect_host_live, collect_mem_pressure, collect_perf_samples, open_session
 
 SAMPLE_INTERVAL = 60      # seconds between samples
 FLUSH_INTERVAL = 180      # seconds between DB flushes (<= this many seconds lost on a hard crash)
@@ -114,11 +114,14 @@ def _update_live(env: str, si, samples: list) -> None:
 def _new_acc():
     # ... ready (11-16), then memory pressure: 17 swap_max_mb, 18 balloon_max_mb, 19 lat_max_pct, 20 lat_max_ts,
     #                                           21 samples, 22 n_balloon, 23 n_swap, 24 n_lat
+    #                                           25 cs_max_pct, 26 cs_max_ts, 27 cs_sum, 28 cs_samples, 29 cs_n_warn,
+    #                                           30 lim_max_pct, 31 lim_n
     return [0.0, "", 0.0, "", 0.0, 0.0, 0, 0, 0, 0, 0, 0.0, "", 0.0, 0, 0, 0,
-            0.0, 0.0, 0.0, "", 0, 0, 0, 0]
+            0.0, 0.0, 0.0, "", 0, 0, 0, 0,
+            0.0, "", 0.0, 0, 0, 0.0, 0]
 
 
-def _fold(acc, cpu, mem, ts, ready=None, swap=None, balloon=None, mlat=None):
+def _fold(acc, cpu, mem, ts, ready=None, swap=None, balloon=None, mlat=None, costop=None, limited=None):
     if cpu > acc[0]:
         acc[0], acc[1] = cpu, ts
     if mem > acc[2]:
@@ -158,6 +161,18 @@ def _fold(acc, cpu, mem, ts, ready=None, swap=None, balloon=None, mlat=None):
             acc[23] += 1
         if mlat >= perf_store.MEM_LAT_WARN:
             acc[24] += 1
+    if costop is not None:
+        if costop > acc[25]:
+            acc[25], acc[26] = costop, ts
+        acc[27] += costop
+        acc[28] += 1
+        if costop >= perf_store.COSTOP_WARN:
+            acc[29] += 1
+    if limited is not None:
+        if limited > acc[30]:
+            acc[30] = limited
+        if limited >= perf_store.LIMITED_MIN:
+            acc[31] += 1
 
 
 def _sample_env(env: str, host: str, user: str, pwd: str) -> None:
@@ -182,6 +197,10 @@ def _sample_env(env: str, host: str, user: str, pwd: str) -> None:
             collect_cpu_ready(si, samples)
         except Exception as exc:
             print(f"[perf] {env} cpu-ready error: {exc}")
+        try:
+            collect_cpu_extra(si, samples)
+        except Exception as exc:
+            print(f"[perf] {env} cpu-extra error: {exc}")
         try:
             collect_mem_pressure(si, samples)
         except Exception as exc:
@@ -208,8 +227,9 @@ def _sample_env(env: str, host: str, user: str, pwd: str) -> None:
                     e["day"], e["d"] = day, _new_acc()
                 e["num_cpu"], e["mem_gb"] = s["num_cpu"], round(s["mem_mb"] / 1024, 1)
                 mp = (s.get("swap_mb"), s.get("balloon_mb"), s.get("mem_lat_pct"))
-                _fold(e["h"], s["cpu_pct"], s["mem_pct"], ts, s.get("ready_pct"), *mp)
-                _fold(e["d"], s["cpu_pct"], s["mem_pct"], ts, s.get("ready_pct"), *mp)
+                cx = (s.get("costop_pct"), s.get("limited_pct"))
+                _fold(e["h"], s["cpu_pct"], s["mem_pct"], ts, s.get("ready_pct"), *mp, *cx)
+                _fold(e["d"], s["cpu_pct"], s["mem_pct"], ts, s.get("ready_pct"), *mp, *cx)
         st.update(last_ok=time.time(), last_error="", vms=len(samples))
     except Exception as exc:
         _sessions.pop(env, None)
