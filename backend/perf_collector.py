@@ -194,6 +194,13 @@ def _sample_env(env: str, host: str, user: str, pwd: str) -> None:
             si = _sessions[env] = open_session(host, user, pwd)
             samples = collect_perf_samples(si)
         try:
+            # Early pass: the ESXi mapping/host load show up right after a restart, instead of after the
+            # (slow, ~1-3 min) Ready / Co-Stop / memory counter queries below. The final pass further down
+            # replaces it with the full data (per-host Ready averages, memory pressure).
+            _update_live(env, si, samples)
+        except Exception as exc:
+            print(f"[perf] {env} host-live (early) error: {exc}")
+        try:
             collect_cpu_ready(si, samples)
         except Exception as exc:
             print(f"[perf] {env} cpu-ready error: {exc}")
