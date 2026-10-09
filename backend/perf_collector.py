@@ -17,7 +17,7 @@ from datetime import datetime
 from pyVim.connect import Disconnect
 
 import perf_store
-from vcenter_client import collect_cpu_ready, collect_host_live, collect_perf_samples, open_session
+from vcenter_client import collect_cpu_ready, collect_host_live, collect_mem_pressure, collect_perf_samples, open_session
 
 SAMPLE_INTERVAL = 60      # seconds between samples
 FLUSH_INTERVAL = 180      # seconds between DB flushes (<= this many seconds lost on a hard crash)
@@ -68,6 +68,10 @@ def _host_verdict(h: dict) -> None:
             bump(1, "CPU Ready ממוצע " + str(h["ready_avg"]) + "% לכל vCPU")
     if h["cores"] and h["vcpu_ratio"] > HOST_RATIO_WARN:
         bump(1, "יחס vCPU:ליבה " + str(h["vcpu_ratio"]) + ":1")
+    if h.get("mp_swap_vms"):
+        bump(2, str(h["mp_swap_vms"]) + " VMs עם swap של זיכרון על ה-host")
+    elif h.get("mp_balloon_vms"):
+        bump(1, str(h["mp_balloon_vms"]) + " VMs עם Balloon על ה-host")
     if h["maintenance"]:
         reasons.append("במצב Maintenance")
     h["level"] = ("ok", "warn", "crit")[level[0]]
@@ -78,16 +82,21 @@ def _update_live(env: str, si, samples: list) -> None:
     hosts_by_mor = collect_host_live(si)
     agg: dict = {}
     for s in samples:
-        a = agg.setdefault(s.get("host_mor", ""), {"vms": 0, "vcpus": 0, "ready": [], "top": []})
+        a = agg.setdefault(s.get("host_mor", ""), {"vms": 0, "vcpus": 0, "ready": [], "top": [], "swap": 0, "balloon": 0})
         a["vms"] += 1
+        if (s.get("swap_mb") or 0) > 0:
+            a["swap"] += 1
+        if (s.get("balloon_mb") or 0) > 0:
+            a["balloon"] += 1
         a["vcpus"] += s["num_cpu"]
         if s.get("ready_pct") is not None:
             a["ready"].append(s["ready_pct"])
         a["top"].append((s["cpu_pct"], s["name"]))
     hosts, vm_host = {}, {}
     for mor, base in hosts_by_mor.items():
-        a = agg.get(mor, {"vms": 0, "vcpus": 0, "ready": [], "top": []})
+        a = agg.get(mor, {"vms": 0, "vcpus": 0, "ready": [], "top": [], "swap": 0, "balloon": 0})
         h = dict(base)
+        h["mp_swap_vms"], h["mp_balloon_vms"] = a["swap"], a["balloon"]
         h["vms"], h["vcpus"] = a["vms"], a["vcpus"]
         h["vcpu_ratio"] = round(a["vcpus"] / base["cores"], 1) if base["cores"] else 0
         h["ready_avg"] = round(sum(a["ready"]) / len(a["ready"]), 2) if a["ready"] else None
@@ -103,10 +112,13 @@ def _update_live(env: str, si, samples: list) -> None:
 
 
 def _new_acc():
-    return [0.0, "", 0.0, "", 0.0, 0.0, 0, 0, 0, 0, 0, 0.0, "", 0.0, 0, 0, 0]
+    # ... ready (11-16), then memory pressure: 17 swap_max_mb, 18 balloon_max_mb, 19 lat_max_pct, 20 lat_max_ts,
+    #                                           21 samples, 22 n_balloon, 23 n_swap, 24 n_lat
+    return [0.0, "", 0.0, "", 0.0, 0.0, 0, 0, 0, 0, 0, 0.0, "", 0.0, 0, 0, 0,
+            0.0, 0.0, 0.0, "", 0, 0, 0, 0]
 
 
-def _fold(acc, cpu, mem, ts, ready=None):
+def _fold(acc, cpu, mem, ts, ready=None, swap=None, balloon=None, mlat=None):
     if cpu > acc[0]:
         acc[0], acc[1] = cpu, ts
     if mem > acc[2]:
@@ -131,6 +143,21 @@ def _fold(acc, cpu, mem, ts, ready=None):
             acc[15] += 1
             if ready >= perf_store.READY_CRIT:
                 acc[16] += 1
+    if swap is not None or balloon is not None or mlat is not None:
+        swap, balloon, mlat = swap or 0.0, balloon or 0.0, mlat or 0.0
+        acc[21] += 1
+        if swap > acc[17]:
+            acc[17] = swap
+        if balloon > acc[18]:
+            acc[18] = balloon
+        if mlat > acc[19]:
+            acc[19], acc[20] = mlat, ts
+        if balloon > 0:
+            acc[22] += 1
+        if swap > 0:
+            acc[23] += 1
+        if mlat >= perf_store.MEM_LAT_WARN:
+            acc[24] += 1
 
 
 def _sample_env(env: str, host: str, user: str, pwd: str) -> None:
@@ -156,6 +183,10 @@ def _sample_env(env: str, host: str, user: str, pwd: str) -> None:
         except Exception as exc:
             print(f"[perf] {env} cpu-ready error: {exc}")
         try:
+            collect_mem_pressure(si, samples)
+        except Exception as exc:
+            print(f"[perf] {env} mem-pressure error: {exc}")
+        try:
             _update_live(env, si, samples)
         except Exception as exc:
             print(f"[perf] {env} host-live error: {exc}")
@@ -176,8 +207,9 @@ def _sample_env(env: str, host: str, user: str, pwd: str) -> None:
                     _queue_closed_bucket(key, e, "d")
                     e["day"], e["d"] = day, _new_acc()
                 e["num_cpu"], e["mem_gb"] = s["num_cpu"], round(s["mem_mb"] / 1024, 1)
-                _fold(e["h"], s["cpu_pct"], s["mem_pct"], ts, s.get("ready_pct"))
-                _fold(e["d"], s["cpu_pct"], s["mem_pct"], ts, s.get("ready_pct"))
+                mp = (s.get("swap_mb"), s.get("balloon_mb"), s.get("mem_lat_pct"))
+                _fold(e["h"], s["cpu_pct"], s["mem_pct"], ts, s.get("ready_pct"), *mp)
+                _fold(e["d"], s["cpu_pct"], s["mem_pct"], ts, s.get("ready_pct"), *mp)
         st.update(last_ok=time.time(), last_error="", vms=len(samples))
     except Exception as exc:
         _sessions.pop(env, None)

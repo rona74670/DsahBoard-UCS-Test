@@ -895,6 +895,36 @@ def build_ibox_router(prefix: str, host: str, user: str, pwd: str, ibox_id: str)
         except Exception as e:
             raise HTTPException(status_code=502, detail="Backend communication error")
 
+    @router.get("/probe-volume-metrics", dependencies=[Depends(require_admin)])
+    def probe_volume_metrics():
+        """Read-only probe: does this iBox expose per-volume latency, and what does a volume's serial look like?"""
+        import json as _json
+        out = {"host": host}
+        try:
+            out["version"] = client.get_system().get("version", "")
+            vols = client._get("volumes", {"type": "MASTER", "page_size": 3}).get("result") or []
+        except Exception as e:
+            raise HTTPException(status_code=502, detail="Backend communication error")
+        out["sample_volumes"] = [{k: v.get(k) for k in ("id", "name", "serial", "pool_name", "size", "type")} for v in vols]
+        out["volume_keys"] = sorted(vols[0].keys()) if vols else []
+        if not vols:
+            return out
+        vid = vols[0]["id"]
+        probes = {}
+        for path in (f"volumes/{vid}/metrics", f"volumes/{vid}/performance", f"volumes/{vid}/stats",
+                     "metrics", "metrics/available", "volumes/performance", "volumes?fields=id,name,serial,performance"):
+            try:
+                r = client._session.get(f"{client.base}/{path}", timeout=20)
+                try:
+                    body = _json.dumps(r.json(), ensure_ascii=False)[:600]
+                except Exception:
+                    body = r.text[:300]
+                probes[path] = {"status": r.status_code, "sample": body}
+            except Exception as e:
+                probes[path] = {"status": "error", "sample": type(e).__name__}
+        out["probes"] = probes
+        return out
+
     @router.get("/summary")
     def summary():
         data = _run(lambda c: c.get_summary())

@@ -67,6 +67,17 @@
     .rdy-flag { display:inline-block; margin-inline-start:4px; cursor:help; }
     .lv--1 { color:var(--muted); font-size:0.7rem; }
     #perf-note { font-size:0.78rem; color:var(--muted); padding:0.6rem 1.5rem 0; }
+    #help-back { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:1000; overflow:auto; padding:2rem 1rem; }
+    #help-box { max-width:860px; margin:0 auto; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:12px; padding:1.2rem 1.6rem 1.6rem; }
+    #help-box h2 { margin:0 0 .2rem; font-size:1.15rem; }
+    #help-box .help-sub { color:var(--muted); font-size:.8rem; margin-bottom:.8rem; }
+    #help-box details { border-top:1px solid var(--border); padding:.55rem 0; }
+    #help-box summary { cursor:pointer; font-weight:700; font-size:.9rem; }
+    #help-box dl { margin:.5rem 0 .2rem; }
+    #help-box dt { font-weight:700; font-size:.84rem; margin-top:.65rem; }
+    #help-box dd { margin:.15rem 1.1rem .1rem 0; font-size:.82rem; line-height:1.65; color:var(--muted); }
+    #help-box dd b { color:var(--text); }
+    #help-close { float:left; background:none; border:1px solid var(--border); color:var(--text); border-radius:6px; padding:.2rem .7rem; cursor:pointer; }
   </style>
 </head>
 <body>
@@ -112,15 +123,85 @@
       </select>
     </label>
     <label title="מוסיף עמודות CPU Ready (פיק וממוצע, לכל vCPU) ואזהרות. תקין &lt; 5%, אזהרה 5–10%, קריטי ≥ 10%"><input type="checkbox" id="f-ready" onchange="saveReady();render()" /> &#x23F1; הצג CPU Ready</label>
+    <label title="מוסיף עמודת לחץ זיכרון מצד ה-host: swap (זיכרון שנזרק לדיסק), Balloon (זיכרון שנגזל), ו-Memory Latency (% זמן המתנה לזיכרון). כל ערך מעל 0 ב-swap/balloon מעיד שה-host מצר את השרת"><input type="checkbox" id="f-mem" onchange="saveMem();render()" /> &#x1F9E0; הצג לחץ זיכרון</label>
     <label title="מוסיף עמודה עם ה-ESXi שהשרת יושב עליו, וכרטיס עומס רגעי של ה-ESXi בפתיחת השרת (נתון חי, לא נשמר ולא מופיע בגרף)"><input type="checkbox" id="f-esxi" onchange="saveEsxi();loadHosts().then(render)" /> &#x1F5A5; הצג ESXi (עומס רגעי)</label>
     <label title="בפתיחת שרת מציג לייטנסי / IOPS / קצב של כל דיסק שלו (נקרא חי מ-vCenter, 5 דקות אחרונות; לא נשמר ולא בגרף)"><input type="checkbox" id="f-disk" onchange="saveDisk();render()" /> &#x1F4BD; הצג לייטנסי דיסקים</label>
     <label title="מסמן בגרף של כל שרת את זמני הגיבוי של Veeam (מוסיף קריאה לשרתי הגיבוי בפתיחת גרף)"><input type="checkbox" id="f-bk" onchange="saveBk();render()" /> &#x1F4BE; הצג זמני גיבוי בגרף</label>
     <label title="מסמן נקודות של jobs מסוג רפליקציה (Replica / סנאפשוט, למשל FT-Rep-1) בצבע נפרד. עובד גם בלי 'הצג זמני גיבוי'"><input type="checkbox" id="f-bksnap" onchange="saveBk();render()" /> הצג רפליקציה / סנאפשוט</label>
     <label><input type="checkbox" id="f-over" onchange="render()" /> הצג רק שרתים שעברו את הסף</label>
     <label><input type="checkbox" id="f-flat" onchange="render()" /> רשימת שרתים (ללא קיבוץ לפי לקוח)</label>
+    <button class="export-btn" onclick="openHelp()" title="הסבר פשוט על כל המדדים והעמודות בדף">&#x2753; הסבר על המדדים</button>
     <button class="export-btn" id="btn-export" onclick="exportExcel()" title="מייצא את השרתים לפי הסינון הנוכחי">&#x1F4E5; יצוא ל-Excel</button>
   </div>
   <div id="perf-note"></div>
+
+  <div id="help-back" onclick="if (event.target === this) closeHelp()">
+    <div id="help-box" role="dialog" aria-label="הסבר על המדדים">
+      <button id="help-close" onclick="closeHelp()">✕ סגור</button>
+      <h2>&#x2753; מה אומר כל מדד?</h2>
+      <div class="help-sub">הסבר קצר ופשוט. לחץ על כותרת כדי לפתוח או לסגור. (Esc סוגר את החלון)</div>
+
+      <details open><summary>📊 הבסיס: CPU, RAM ופיק / ממוצע</summary><dl>
+        <dt>CPU %</dt><dd>כמה מכוח המעבד שהוגדר לשרת הוא באמת משתמש בו. <b>100% = כל המעבדים של השרת עובדים בכל הכוח.</b> גבוה לרגע זה לא בעיה; גבוה לאורך זמן = השרת צריך יותר מעבדים או שיש תהליך שתוקע אותו.</dd>
+        <dt>RAM %</dt><dd>כמה מהזיכרון המוגדר השרת משתמש בו <b>באופן פעיל</b> (זיכרון שהוא נוגע בו עכשיו, בלי מטמון). חשוב: זה <b>לא אומר שהזיכרון נגמר</b>. כדי לדעת אם חסר זיכרון, תסתכל על "לחץ זיכרון" למטה.</dd>
+        <dt>פיק</dt><dd>הדקה הכי עמוסה בטווח שבחרת (ומתי היא קרתה).</dd>
+        <dt>ממוצע</dt><dd>הרמה הרגילה של השרת לאורך הטווח. <b>פיק גבוה + ממוצע נמוך = קפיצה חד-פעמית.</b> פיק גבוה + ממוצע גבוה = שרת שעובד קשה כל הזמן.</dd>
+        <dt>vCPU / RAM (GB)</dt><dd>כמה מעבדים (וירטואליים) וכמה זיכרון הוגדרו לשרת.</dd>
+        <dt>מד עומס</dt><dd>סיכום מהיר: האם העומס הוא מקרי או חוזר.<br>🟢 תקין · ⚪ פיק חד-פעמי (נגע בעומס גבוה אבל לא חוזר) · 🟠 לתשומת לב (עומס בינוני לאחוז גדול מהזמן, או עומס גבוה בכמה שעות/ימים) · 🔴 בעייתי (עומס גבוה בחלק משמעותי מהזמן או שחוזר שוב ושוב). ריחוף על התג מסביר למה.</dd>
+        <dt>סף CPU / סף RAM</dt><dd>הערכים שמעליהם שרת נחשב "עבר את הסף" (ברירת מחדל 80% ו-85%). אפשר לשנות בשורת הסינון. הקו האדום המקווקו בגרף הוא הסף של ה-CPU.</dd>
+      </dl></details>
+
+      <details><summary>⏱ CPU Ready — כשהשרת מחכה למעבד</summary><dl>
+        <dt>מה זה</dt><dd>אחוז הזמן שהשרת <b>רצה לעבוד אבל חיכה בתור</b> למעבד פיזי פנוי על ה-ESXi. נמדד לכל vCPU.</dd>
+        <dt>איך קוראים את זה</dt><dd>🟢 מתחת ל-5% תקין · 🟠 5–10% אזהרה · 🔴 10% ומעלה קריטי (השרת מרגיש איטי).</dd>
+        <dt>ההבדל מ-CPU %</dt><dd>CPU % גבוה = השרת עובד קשה. <b>Ready גבוה = ה-host עמוס מדי</b>, גם אם ה-CPU % של השרת נראה נמוך. זה הסימן הקלאסי ל"שרת איטי בלי בעיית משאבים".</dd>
+      </dl></details>
+
+      <details><summary>🧠 לחץ זיכרון — כשה-host מצר את הזיכרון של השרת</summary><dl>
+        <dt>מה זה בקצרה</dt><dd>שלושה סימנים שה-host (ה-ESXi) <b>לא נותן לשרת את כל הזיכרון שהגדרת לו</b> כי הוא עצמו חסר זיכרון. 🟢 תקין · 🟠 אזהרה · 🔴 חמור.</dd>
+        <dt>Swap (🔴 חמור)</dt><dd>ה-host זרק חלק מהזיכרון של השרת <b>לדיסק</b>. דיסק איטי בהרבה מזיכרון, ולכן השרת מאט. כל ערך מעל 0 צריך תשומת לב.</dd>
+        <dt>Balloon (🟠 אזהרה)</dt><dd>ה-host "גוזל" זיכרון מהשרת דרך מנגנון בתוך המערכת. סימן שה-host מתחיל להיות במחסור, עדיין לפני swap.</dd>
+        <dt>Memory Latency</dt><dd>אחוז הזמן שהשרת מחכה לזיכרון בגלל דחיסה או swap. מ-1% אזהרה, מ-5% חמור.</dd>
+        <dt>חשוב לדעת</dt><dd>זה מראה רק לחץ שנגרם <b>מה-host</b>. שרת שהוגדר עם פחות זיכרון ממה שהאפליקציה צריכה (ומחליף זיכרון בתוך Windows/Linux) <b>לא יופיע כאן</b>; את זה רואים רק מתוך השרת עצמו.</dd>
+      </dl></details>
+
+      <details><summary>🖥 ESXi — על איזה שרת פיזי השרת יושב</summary><dl>
+        <dt>עמודת ESXi</dt><dd>שם ה-host הפיזי שהשרת רץ עליו עכשיו, עם נקודת צבע: 🟢 תקין · 🟠 עומס בינוני · 🔴 עומס גבוה · ⚫ לא זמין.</dd>
+        <dt>הכרטיס שנפתח מעל הגרף</dt><dd>
+          <b>CPU / RAM</b> — כמה ה-host כולו עמוס. מ-75% CPU או 85% RAM אזהרה, מ-90% / 95% חמור.<br>
+          <b>CPU Ready ממוצע</b> — כמה בממוצע השרתים על ה-host מחכים למעבד (מ-3% אזהרה, מ-5% חמור).<br>
+          <b>יחס vCPU:ליבה</b> — כמה מעבדים וירטואליים חולקים כל ליבה פיזית. 4:1 אומר ארבעה מעבדים וירטואליים על ליבה אחת. מעל 4:1 ה-host עלול להיות עמוס.<br>
+          <b>הכי עמוסים על ה-ESXi</b> — שלושת השרתים שצורכים הכי הרבה CPU על אותו host (מי "השכן הרועש").
+        </dd>
+        <dt>מתי זה שימושי</dt><dd>כשהשרת איטי אבל הוא עצמו לא עמוס: בדוק אם ה-host שלו עמוס, כי אז הבעיה אצל השכנים ולא אצלו. הנתון רגעי ולא נשמר.</dd>
+      </dl></details>
+
+      <details><summary>💽 דיסקים — לייטנסי, IOPS ו-MB/s</summary><dl>
+        <dt>לייטנסי (Read / Write)</dt><dd>כמה זמן, <b>במילישניות</b>, לוקח לדיסק לענות לקריאה או לכתיבה. מתחת ל-20ms תקין · 20–30ms איטי · 30ms ומעלה בעייתי. כמה שהמספר נמוך יותר, זה טוב יותר. בריחוף רואים גם את השיא ב-5 הדקות האחרונות.</dd>
+        <dt>IOPS (R / W)</dt><dd>כמה פעולות קריאה / כתיבה לשנייה הדיסק מבצע.</dd>
+        <dt>MB/s (R / W)</dt><dd>כמה נתונים לשנייה עוברים (קריאה / כתיבה).</dd>
+        <dt>Datastore</dt><dd>המקום באחסון שעליו הדיסק הוירטואלי יושב.</dd>
+        <dt>שים לב</dt><dd>הלייטנסי הוא מה ש<b>השרת חווה</b> (כפי שה-ESXi רואה), כולל המתנה בתור של ה-host. הנתון חי, ממוצע של 5 דקות אחרונות, ולא נשמר.</dd>
+      </dl></details>
+
+      <details><summary>📈 הגרף של כל שרת</summary><dl>
+        <dt>הקו הכחול / הסגול</dt><dd>פיק ה-CPU (כחול) ופיק ה-RAM (סגול), הערך הגבוה ביותר בכל שעה (בטווחים ארוכים — בכל יום).</dd>
+        <dt>הקו האדום המקווקו</dt><dd>סף ה-CPU שהוגדר.</dd>
+        <dt>קווים כתומים — גיבוי</dt><dd>מתי נוצר גיבוי של השרת ב-Veeam. אם יש גם פס שקוף, זה משך הגיבוי. ריחוף מציג שעה או טווח שעות, שם ה-job ושרת הגיבוי. כך אפשר לדעת אם קפיצה בעומס נגרמה מגיבוי.</dd>
+        <dt>קווים טורקיז — רפליקציה / סנאפשוט</dt><dd>נקודות של jobs מסוג רפליקציה (למשל כל שעה). מוצגים רק אם סימנת "הצג רפליקציה / סנאפשוט".</dd>
+        <dt>"לא נמצא גיבוי לשרת"</dt><dd>לא נמצא אף גיבוי של השרת בשרתי הגיבוי בטווח הזה. אם מופיע "לא ענו", אחד משרתי הגיבוי לא הגיב בזמן.</dd>
+      </dl></details>
+
+      <details><summary>🔎 טיפ: איך מגלים למה שרת איטי</summary><dl>
+        <dd>1. <b>CPU % / RAM %</b> של השרת גבוהים? → השרת עצמו צריך יותר משאבים.<br>
+            2. <b>CPU Ready</b> גבוה? → ה-host עמוס, כנראה יותר מדי שרתים עליו.<br>
+            3. <b>לחץ זיכרון</b> (swap / balloon)? → ל-host חסר זיכרון.<br>
+            4. <b>לייטנסי דיסק</b> גבוה? → בעיה באחסון.<br>
+            5. <b>קווים כתומים</b> בזמן הקפיצה? → הגיבוי גרם לעומס.<br>
+            6. כלום מהנ"ל? → ייתכן שהבעיה בתוך השרת (אפליקציה, מערכת הפעלה) או ברשת.</dd>
+      </dl></details>
+    </div>
+  </div>
 
   <div class="kpi-row">
     <div class="kpi-card blue"><div class="kpi-label">שרתים נמדדים</div><div class="kpi-value" id="k-vms">–</div><div class="kpi-detail" id="k-vms-d"></div></div>
@@ -248,6 +329,34 @@ async function fillDisks(cell, env, name) {
       '<table style="width:100%;margin-top:.3rem;border-collapse:collapse"><thead><tr class="muted"><th style="text-align:right">דיסק</th><th style="text-align:right">Datastore</th><th class="center">גודל</th><th class="center">Read</th><th class="center">Write</th><th class="center">IOPS (R / W)</th><th class="center">MB/s (R / W)</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   } catch (x) { box.innerHTML = '<span class="muted">💽 לא ניתן לטעון נתוני דיסק (שגיאה / vCenter לא ענה).</span>'; }
 }
+// ── Memory pressure (host-side): swap / balloon / memory latency, stored per hour/day like CPU Ready ──
+var MEM_LAT_WARN = 1, MEM_LAT_CRIT = 5;
+function memOn() { return document.getElementById('f-mem').checked; }
+function loadMem() { try { document.getElementById('f-mem').checked = localStorage.getItem('perf-mem') === '1'; } catch (x) {} }
+function saveMem() { try { localStorage.setItem('perf-mem', memOn() ? '1' : '0'); } catch (x) {} }
+// 2 = swap or heavy memory latency, 1 = balloon or some latency, 0 = none, -1 = no data
+function memLevel(v) {
+  if (!v.mp_samples) return -1;
+  if (v.mp_swap_max_mb > 0 || v.mp_lat_max_pct >= MEM_LAT_CRIT) return 2;
+  if (v.mp_balloon_max_mb > 0 || v.mp_lat_max_pct >= MEM_LAT_WARN) return 1;
+  return 0;
+}
+function memPressHtml(v) {
+  var lv = memLevel(v);
+  if (lv < 0) return '<span class="muted">—</span>';
+  var tip = 'swap מקס׳ ' + r1(v.mp_swap_max_mb) + ' MB (' + (v.mp_n_swap || 0) + ' דקות) · Balloon מקס׳ ' + r1(v.mp_balloon_max_mb) + ' MB (' + (v.mp_n_balloon || 0) +
+    ' דקות) · Memory Latency מקס׳ ' + r1(v.mp_lat_max_pct) + '%' + (v.mp_lat_max_ts ? ' ב-' + fmtWhen(v.mp_lat_max_ts) : '');
+  if (lv === 0) return '<span class="pct ok" title="' + e(tip) + '">🟢 תקין</span>';
+  var parts = [];
+  if (v.mp_swap_max_mb > 0) parts.push('swap ' + r1(v.mp_swap_max_mb) + 'MB');
+  if (v.mp_balloon_max_mb > 0) parts.push('balloon ' + r1(v.mp_balloon_max_mb) + 'MB');
+  if (v.mp_lat_max_pct >= MEM_LAT_WARN) parts.push('lat ' + r1(v.mp_lat_max_pct) + '%');
+  return '<span class="pct ' + (lv === 2 ? 'hot' : 'warm') + '" title="' + e(tip) + '">' + (lv === 2 ? '🔴 ' : '🟠 ') + e(parts.join(' · ')) + '</span>';
+}
+function memHeads() { return memOn() ? th('לחץ זיכרון', 'mempress', 'center') : ''; }
+function openHelp() { document.getElementById('help-back').style.display = 'block'; }
+function closeHelp() { document.getElementById('help-back').style.display = 'none'; }
+document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closeHelp(); });
 function loadReady() { try { document.getElementById('f-ready').checked = localStorage.getItem('perf-ready') === '1'; } catch (x) {} }
 function saveReady() { try { localStorage.setItem('perf-ready', readyOn() ? '1' : '0'); } catch (x) {} }
 function rdyCls(p) { return p >= RDY_CRIT ? 'crit' : (p >= RDY_WARN ? 'warn' : 'ok'); }
@@ -349,7 +458,7 @@ function filtered() {
     if (cu && (v.sap_number || '__nosap__') !== cu) return false;
     if (q && !((v.vm_name || '').toLowerCase().includes(q) || (v.sap_number || '').toLowerCase().includes(q) ||
                (_customerMap[v.sap_number] || '').toLowerCase().includes(q))) return false;
-    if (over && !(v.max_cpu_pct >= tc || v.max_mem_pct >= tr || (readyOn() && v.ready_max_pct >= RDY_WARN))) return false;
+    if (over && !(v.max_cpu_pct >= tc || v.max_mem_pct >= tr || (readyOn() && v.ready_max_pct >= RDY_WARN) || (memOn() && memLevel(v) >= 1))) return false;
     if (lvMin && v._lv < lvMin) return false;
     return true;
   });
@@ -373,6 +482,8 @@ function buildGroups(vms) {
     g.overRam = g.vms.filter(function (v) { return v.max_mem_pct >= tr; }).length;
     g.ready = Math.max.apply(null, g.vms.map(function (v) { return v.ready_max_pct || 0; }));
     g.overReady = g.vms.filter(function (v) { return v.ready_max_pct >= RDY_WARN; }).length;
+    g.memBad = g.vms.filter(function (v) { return memLevel(v) >= 1; }).length;
+    g.memLv = g.vms.length ? Math.max.apply(null, g.vms.map(function (v) { return (memLevel(v) + 1) * 1000; })) + g.memBad : 0;
     return g;
   });
 }
@@ -386,6 +497,7 @@ function sortVal(o, col) {
     case 'avgcpu': return o.avg_cpu_pct || 0;
     case 'avgram': return o.avg_mem_pct || 0;
     case 'load': return o._idx != null ? o._idx : (o.idx || 0);
+    case 'mempress': return o.memLv != null ? o.memLv : (memLevel(o) + 1) * 1000 + (o.mp_swap_max_mb || 0) + (o.mp_balloon_max_mb || 0) / 10 + (o.mp_lat_max_pct || 0);
     case 'ready': return o.ready != null ? o.ready : (o.ready_max_pct || 0);
     case 'avgready': return o.ready_avg_pct || 0;
     case 'overCpu': return o.overCpu || 0;
@@ -422,8 +534,9 @@ function vmRow(v, indent) {
     '<td class="center">' + pctHtml(v.avg_mem_pct, tr) + '</td>' +
     '<td class="center">' + lvBadge(v) + '</td>' +
     (readyOn() ? '<td class="center">' + readyPeakHtml(v) + '</td><td class="center">' + readyAvgHtml(v) + '</td>' : '') +
+    (memOn() ? '<td class="center">' + memPressHtml(v) + '</td>' : '') +
     '<td colspan="3"></td></tr>';
-  if (_chartOpen.has(k)) html += '<tr class="chart-row" id="chart-' + btoa(unescape(encodeURIComponent(k))).replace(/=/g, '') + '"><td colspan="12">⏳ טוען גרף...</td></tr>';
+  if (_chartOpen.has(k)) html += '<tr class="chart-row" id="chart-' + btoa(unescape(encodeURIComponent(k))).replace(/=/g, '') + '"><td colspan="13">⏳ טוען גרף...</td></tr>';
   return html;
 }
 
@@ -471,14 +584,14 @@ function render() {
   if (flat) {
     thead.innerHTML = '<tr>' + th('שם VM', 'name') + '<th>סביבה</th>' + (esxiOn() ? '<th class="center">ESXi</th>' : '') + '<th class="center">vCPU / RAM (GB)</th>' +
       th('פיק CPU', 'cpu', 'center') + th('ממוצע CPU', 'avgcpu', 'center') + th('פיק RAM', 'ram', 'center') + th('ממוצע RAM', 'avgram', 'center') +
-      th('מד עומס', 'load', 'center') + readyHeads() + '<th colspan="3">לקוח</th></tr>';
+      th('מד עומס', 'load', 'center') + readyHeads() + memHeads() + '<th colspan="3">לקוח</th></tr>';
     tbody.innerHTML = vms.slice().sort(cmp).map(function (v) {
       return vmRow(v, false).replace('<td colspan="3"></td>', '<td colspan="3" class="muted">' + e(_customerMap[v.sap_number] || v.sap_number || '—') + '</td>');
     }).join('');
   } else {
     thead.innerHTML = '<tr>' + th('לקוח / שרת', 'name') + '<th>סביבה</th>' + (esxiOn() ? '<th class="center">ESXi</th>' : '') + '<th class="center">vCPU / RAM (GB)</th>' +
       th('פיק CPU', 'cpu', 'center') + th('ממוצע CPU', 'avgcpu', 'center') + th('פיק RAM', 'ram', 'center') + th('ממוצע RAM', 'avgram', 'center') +
-      th('מד עומס', 'load', 'center') + readyHeads() + th('שרתים', 'vms', 'center') + th('עברו CPU', 'overCpu', 'center') + th('עברו RAM', 'overRam', 'center') + '</tr>';
+      th('מד עומס', 'load', 'center') + readyHeads() + memHeads() + th('שרתים', 'vms', 'center') + th('עברו CPU', 'overCpu', 'center') + th('עברו RAM', 'overRam', 'center') + '</tr>';
     var html = '';
     buildGroups(vms).sort(cmp).forEach(function (g) {
       var open = _expanded.has(g.key);
@@ -490,6 +603,7 @@ function render() {
         '<td class="center">' + pctHtml(g.ram, tr) + '</td><td></td>' +
         '<td class="center">' + (g.lv3 ? '<span class="lv lv-3">🔴 ' + g.lv3 + '</span> ' : '') + (g.lv2 ? '<span class="lv lv-2">🟠 ' + g.lv2 + '</span>' : (g.lv3 ? '' : '<span class="muted">—</span>')) + '</td>' +
         (readyOn() ? '<td class="center">' + (g.overReady ? '<span class="pct rdy-' + rdyCls(g.ready) + '">' + r1(g.ready) + '%</span> <span class="muted" style="font-size:0.7rem">(' + g.overReady + ' שרתים)</span>' : '<span class="muted">—</span>') + '</td><td></td>' : '') +
+        (memOn() ? '<td class="center">' + (g.memBad ? '<span class="pct warm">' + g.memBad + ' שרתים</span>' : '<span class="muted">—</span>') + '</td>' : '') +
         '<td class="center" style="font-weight:700">' + g.vms.length + '</td>' +
         '<td class="center">' + (g.overCpu ? '<span class="pct hot">' + g.overCpu + '</span>' : '<span class="muted">0</span>') + '</td>' +
         '<td class="center">' + (g.overRam ? '<span class="pct hot">' + g.overRam + '</span>' : '<span class="muted">0</span>') + '</td></tr>';
@@ -580,6 +694,7 @@ async function exportExcel(ev, onlyKey) {
   var ws = wb.addWorksheet('ביצועים', { views: [{ rightToLeft: true, state: 'frozen', ySplit: 1 }] });
   var cols = ['לקוח', 'פריוריטי #', 'שם VM', 'סביבה', 'vCPU', 'RAM (GB)', 'פיק CPU %', 'זמן פיק CPU', 'ממוצע CPU %', 'פיק RAM %', 'זמן פיק RAM', 'ממוצע RAM %', 'דגימות', 'מד עומס', '% זמן CPU ≥85', '% זמן CPU ≥70', '% זמן RAM ≥85', '% זמן RAM ≥70', 'פירוט'];
   if (readyOn()) cols.push('פיק CPU Ready % (לכל vCPU)', 'ממוצע CPU Ready %', 'דקות Ready ≥5%', 'דקות Ready ≥10%');
+  if (memOn()) cols.push('swap מקס׳ (MB)', 'Balloon מקס׳ (MB)', 'Memory Latency מקס׳ (%)');
   if (esxiOn()) cols.push('ESXi', 'עומס ESXi');
   ws.columns = cols.map(function (c) { return { header: c, width: Math.max(c.length + 4, 12) }; });
   ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -590,7 +705,7 @@ async function exportExcel(ev, onlyKey) {
       r1(v.max_cpu_pct), v.max_cpu_ts || '', r1(v.avg_cpu_pct), r1(v.max_mem_pct), v.max_mem_ts || '', r1(v.avg_mem_pct), v.samples,
       LV_LABEL[v._lv].replace(/^\S+\s/, ''),
       r1((v.cpu_n_high || 0) / (v.samples || 1) * 100), r1((v.cpu_n_mid || 0) / (v.samples || 1) * 100),
-      r1((v.mem_n_high || 0) / (v.samples || 1) * 100), r1((v.mem_n_mid || 0) / (v.samples || 1) * 100), v._why].concat(readyOn() ? [r1(v.ready_max_pct), r1(v.ready_avg_pct), v.ready_n_warn || 0, v.ready_n_crit || 0] : []).concat(esxiOn() ? (function () { var hh = hostOf(v); return hh ? [hh.name, HL_TXT[hh.level] + ' (CPU ' + hh.cpu_pct + '% · RAM ' + hh.mem_pct + '%)'] : ['', '']; })() : []));
+      r1((v.mem_n_high || 0) / (v.samples || 1) * 100), r1((v.mem_n_mid || 0) / (v.samples || 1) * 100), v._why].concat(readyOn() ? [r1(v.ready_max_pct), r1(v.ready_avg_pct), v.ready_n_warn || 0, v.ready_n_crit || 0] : []).concat(memOn() ? [r1(v.mp_swap_max_mb), r1(v.mp_balloon_max_mb), r1(v.mp_lat_max_pct)] : []).concat(esxiOn() ? (function () { var hh = hostOf(v); return hh ? [hh.name, HL_TXT[hh.level] + ' (CPU ' + hh.cpu_pct + '% · RAM ' + hh.mem_pct + '%)'] : ['', '']; })() : []));
     if (readyOn() && v.ready_max_pct >= RDY_WARN) row.getCell(20).font = { bold: true, color: { argb: v.ready_max_pct >= RDY_CRIT ? 'FFD1242F' : 'FFBF8700' } };
     if (v.max_cpu_pct >= tc) row.getCell(7).font = { bold: true, color: { argb: 'FFD1242F' } };
     if (v.max_mem_pct >= tr) row.getCell(10).font = { bold: true, color: { argb: 'FFD1242F' } };
@@ -608,6 +723,7 @@ loadReady();
 loadBk();
 loadEsxi();
 loadDisk();
+loadMem();
 load();
 </script>
 </body>

@@ -549,6 +549,23 @@ Get-Service     UcsDashboard
 - **חלק ב' (לא נעשה):** לייטנסי ברמת Volume באינפינידט — דורש מיפוי datastore→LUN (`naa`)→serial של ה-volume ו-endpoint מדדי volume ב-iBox (לא נבדק אם קיים ב-v7.3/v8.1).
 - **לא נבדק מול vCenter אמיתי** בזמן הכתיבה.
 
+### לחץ זיכרון מצד ה-host בדף הביצועים (גרסה 4.11)
+- **מטרה:** לזהות VM שה-host מצר לו זיכרון (שה-RAM % הרגיל — זיכרון פעיל — לא מראה). אותו מנגנון כמו CPU Ready: דגימה כל דקה, נשמר ב-roll-up שעתי/יומי.
+- **מדדים (`collect_mem_pressure` ב-[vcenter_client.py](backend/vcenter_client.py), realtime 20 שנ', ממוצע ~דקה):**
+  `mem.swapped` (זיכרון שנזרק לדיסק — כל ערך >0 חמור), `mem.vmmemctl` (Balloon — זיכרון שנגזל), `mem.latency` (% זמן המתנה לזיכרון בגלל דחיסה/swap).
+- **DB:** עמודות חדשות ב-`vm_perf_hourly/daily` (מתווספות אוטומטית ב-`init_perf_tables`): `mp_swap_max_mb, mp_balloon_max_mb, mp_lat_max_pct, mp_lat_max_ts, mp_samples, mp_n_balloon, mp_n_swap, mp_n_lat`.
+  ב-`perf_collector` ה-acc הורחב ל-25 איברים (17–24). נתונים ישנים מציגים "—" עד שנצברים.
+- **ספים:** 🔴 swap>0 או Memory Latency ≥5%; 🟠 Balloon>0 או latency ≥1% (`MEM_LAT_WARN/CRIT` ב-perf_store — היוריסטיקה, לא תקן).
+- **UI:** צ'קבוקס `🧠 הצג לחץ זיכרון` (localStorage `perf-mem`) — עמודה "לחץ זיכרון" (tooltip עם מקסימומים ודקות), שורת לקוח מציגה כמה שרתים בלחץ, מיון, ו"הצג רק שרתים שעברו את הסף" כולל אותה; 3 עמודות ביצוא Excel.
+- **ESXi:** כרטיס ה-host מציג גם כמה VMs עם swap/balloon על אותו host (swap = קריטי, balloon = אזהרה).
+- **מגבלה:** מזהה רק לחץ שה-host גורם. VM שמוגדר קטן מדי לאפליקציה (paging בתוך מערכת ההפעלה) לא נראה מ-vCenter — דורש מדדי guest (למשל PRTG).
+- **לא נבדק מול vCenter אמיתי.**
+
+### חלון הסבר על המדדים (גרסה 4.11)
+- כפתור `❓ הסבר על המדדים` בסרגל דף הביצועים פותח חלון (HTML סטטי ב-`vcenter_perf.html`, `#help-back`; נסגר ב-Esc / לחיצה בחוץ) עם הסבר פשוט בעברית לכל המדדים:
+  CPU/RAM/פיק/ממוצע/מד עומס, CPU Ready, לחץ זיכרון, ESXi, דיסקים, הגרף וסימוני הגיבוי, ו"איך מגלים למה שרת איטי".
+  **כשמשנים סף או מוסיפים מדד — לעדכן גם את החלון.**
+
 ### Deploy
 - אחרי שינוי backend צריך `Restart-Service UcsDashboard` כמנהל; אחרי ההפעלה מחדש יש להתחבר מחדש לדשבורד.
 

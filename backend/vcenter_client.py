@@ -1145,6 +1145,57 @@ def collect_perf_samples(si) -> list:
 _ready_counter_ids: dict = {}   # vCenter instanceUuid -> counter id of cpu.ready.summation
 
 
+_mem_counter_ids: dict = {}   # vCenter instanceUuid -> {"swap": id, "balloon": id, "lat": id}
+
+
+def collect_mem_pressure(si, samples: list) -> None:
+    """Adds host-side memory pressure to each sample (realtime, last ~1 min, averaged):
+    "swap_mb"     mem.swapped      - VM memory the host pushed to disk (any value > 0 is bad)
+    "balloon_mb"  mem.vmmemctl     - memory the host reclaims through the balloon driver
+    "mem_lat_pct" mem.latency      - % of time the VM waits for memory because of compression/swapping
+    Failures leave the samples untouched (CPU/RAM sampling must never break)."""
+    content = si.RetrieveContent()
+    pm = content.perfManager
+    key = content.about.instanceUuid
+    ids = _mem_counter_ids.get(key)
+    if ids is None:
+        by_name = {(c.groupInfo.key, c.nameInfo.key, str(c.rollupType)): c.key for c in pm.perfCounter}
+        ids = {"swap": by_name.get(("mem", "swapped", "average")),
+               "balloon": by_name.get(("mem", "vmmemctl", "average")),
+               "lat": by_name.get(("mem", "latency", "average"))}
+        _mem_counter_ids[key] = ids
+    want = {cid: k for k, cid in ids.items() if cid is not None}
+    if not want:
+        return
+    by_obj = {s["_obj"]: s for s in samples if s.get("_obj") is not None}
+    objs = list(by_obj)
+    for i in range(0, len(objs), 150):
+        specs = [vim.PerformanceManager.QuerySpec(
+                     entity=o, intervalId=20, maxSample=3,
+                     metricId=[vim.PerformanceManager.MetricId(counterId=cid, instance="") for cid in want])
+                 for o in objs[i:i + 150]]
+        try:
+            res = pm.QueryPerf(querySpec=specs)
+        except Exception:
+            continue
+        for r in res or []:
+            s = by_obj.get(r.entity)
+            if not s:
+                continue
+            for series in (r.value or []):
+                k = want.get(series.id.counterId)
+                vals = [v for v in (series.value or []) if v is not None and v >= 0]
+                if not k or not vals:
+                    continue
+                avg = sum(vals) / len(vals)
+                if k == "swap":
+                    s["swap_mb"] = round(avg / 1024, 1)
+                elif k == "balloon":
+                    s["balloon_mb"] = round(avg / 1024, 1)
+                else:
+                    s["mem_lat_pct"] = round(avg, 2)
+
+
 def collect_host_live(si) -> dict:
     """Live load of every ESXi host: {host mor string: {...}} (one light PropertyCollector pass).
 
