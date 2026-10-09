@@ -13,6 +13,7 @@ Inputs are plain dicts already produced elsewhere:
   backups : result of /api/vcenter/perf/backups (None if unavailable)
 """
 
+import math
 import re
 from datetime import datetime, timedelta
 
@@ -125,6 +126,12 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
     balloon = (s.get("mp_balloon_max_mb") or 0) > 0
     mlat = s.get("mp_lat_max_pct") or 0
     host_bad = bool(host) and host.get("level") in ("warn", "crit", "down")
+    # "Busy" = real CPU/RAM load, Ready or swap on the host. A warning caused only by the vCPU:core ratio is a
+    # capacity-planning flag, not contention (Ready shows whether VMs actually wait), so it must not be blamed
+    # for this VM's CPU.
+    host_busy = bool(host) and (host.get("level") == "down" or (host.get("cpu_pct") or 0) >= 75
+                                or (host.get("ready_avg") or 0) >= 3 or (host.get("mem_pct") or 0) >= 85
+                                or bool(host.get("mp_swap_vms")))
     facts.update({
         "cpu_load_level": cpu_lv, "ram_load_level": mem_lv, "ready_level": rdy_lv,
         "cpu_pct_time_ge85": _pct(s.get("cpu_n_high"), n), "ram_pct_time_ge85": _pct(s.get("mem_n_high"), n),
@@ -160,7 +167,7 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
             act = _t("Recurring Co-Stop means too many vCPUs: reduce vCPUs (start with 1-2) instead of adding.",
                      "Co-Stop חוזר מעיד על יותר מדי vCPUs: להפחית vCPUs (להתחיל ב-1-2) ולא להוסיף.")
             cpu_answer = _t("No - it already has too many vCPUs (Co-Stop).", "לא - יש לו כבר יותר מדי vCPUs (Co-Stop).")
-        elif rdy_lv >= 2 or host_bad:
+        elif rdy_lv >= 2 or host_busy:
             act = _t("The VM waits for physical CPU (Ready / busy host): move it to a quieter host (vMotion) or relieve the host. Do not add vCPUs.",
                      "השרת מחכה למעבד פיזי (Ready / host עמוס): להעביר ל-host שקט יותר (vMotion) או לפנות את ה-host. לא להוסיף vCPUs.")
             cpu_answer = _t("No - the cause is host contention, not VM size.", "לא - הסיבה היא עומס על ה-host ולא גודל השרת.")
@@ -172,7 +179,24 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                      "ואת השעות. אם העומס לגיטימי ומרובה threads לשקול scale-out או תוספת vCPUs בזהירות; קפיצה חדה ל-100% מעידה בדרך כלל על תהליך תקוע או משימה.")
             cpu_answer = _t("Maybe - only if the load is legitimate; first find the cause inside the server.",
                             "אולי - רק אם העומס לגיטימי; קודם לאתר את הסיבה בתוך השרת.")
-            if (vcpu or 0) >= 16 and (s.get("avg_cpu_pct") or 0) < 30:
+            if (s.get("avg_cpu_pct") or 0) >= 50:
+                avg = s.get("avg_cpu_pct") or 0
+                need = min(int(vcpu or 2) * 2, max(int(vcpu or 2) + 1, int(math.ceil((vcpu or 2) * avg / 55.0))))
+                if need >= 4:
+                    need += need % 2
+                room_en = " The host has headroom (CPU %s%%, Ready %s%%)." % (host.get("cpu_pct"), host.get("ready_avg")) if host and not host_busy else ""
+                room_he = " ל-host יש מקום (CPU %s%%, Ready %s%%)." % (host.get("cpu_pct"), host.get("ready_avg")) if host and not host_busy else ""
+                act = _t("The VM keeps a high CPU average (%s%% on %s vCPUs) with no contention (Ready, Co-Stop and the host are fine), so it genuinely "
+                         "needs more CPU or its workload is heavy. For a database/application server first check the top CPU consumers inside it "
+                         "(heaviest queries, missing indexes, scheduled jobs). If the load is legitimate add vCPUs in small steps (about %s vCPUs as a "
+                         "first step) and re-check after a few days.%s" % (round(avg, 1), vcpu, need, room_en),
+                         "לשרת ממוצע CPU גבוה (%s%% על %s vCPUs) ללא תחרות (Ready, Co-Stop וה-host תקינים), כלומר הוא באמת צריך יותר CPU או שהעומס כבד. "
+                         "בשרת DB/אפליקציה קודם לבדוק מה צורך הכי הרבה CPU בתוכו (שאילתות כבדות, אינדקסים חסרים, משימות מתוזמנות). "
+                         "אם העומס לגיטימי - להוסיף vCPUs בצעדים קטנים (כ-%s vCPUs כצעד ראשון) ולבדוק שוב אחרי כמה ימים.%s" % (round(avg, 1), vcpu, need, room_he))
+                cpu_answer = _t("Yes, probably - sustained high CPU (average %s%%) with no contention. Check the heaviest workload first, then add vCPUs "
+                                "in small steps (about %s)." % (round(avg, 1), need),
+                                "כנראה כן - CPU גבוה באופן מתמשך (ממוצע %s%%) ללא תחרות. קודם לבדוק מה העומס הכבד, ואז להוסיף vCPUs בצעדים קטנים (כ-%s)." % (round(avg, 1), need))
+            elif (vcpu or 0) >= 16 and (s.get("avg_cpu_pct") or 0) < 30:
                 act = _t(act["en"] + " Note: average CPU is low for %s vCPUs - spiky load, not a capacity shortage." % vcpu,
                          act["he"] + " שים לב: ממוצע ה-CPU נמוך ביחס ל-%s vCPUs - עומס קופצני, לא חוסר קיבולת." % vcpu)
                 cpu_answer = _t("Probably not - 100% bursts on an otherwise idle VM point to a runaway process or job.",
@@ -246,7 +270,7 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                            _t("The host could not be determined (VM off, or the collector just restarted).", "לא ניתן לקבוע את ה-host (השרת כבוי, או שהאיסוף הופעל מחדש לאחרונה)."),
                            _t("Try again in a minute.", "לנסות שוב בעוד דקה.")))
     elif host_bad:
-        findings.append(_f("crit" if host.get("level") in ("crit", "down") else "warn", "ESXi",
+        findings.append(_f(("crit" if host.get("level") in ("crit", "down") else "warn") if host_busy else "info", "ESXi",
                            _t("The ESXi host %s is under load" % host.get("name"), "ה-ESXi %s תחת עומס" % host.get("name")),
                            _t("%s. CPU %s%%, RAM %s%%, %s VMs, vCPU:core %s:1." % ("; ".join(host.get("reasons") or []), host.get("cpu_pct"), host.get("mem_pct"), host.get("vms"), host.get("vcpu_ratio")),
                               "%s. CPU %s%%, RAM %s%%, %s שרתים, יחס vCPU:ליבה %s:1." % ("; ".join(host.get("reasons") or []), host.get("cpu_pct"), host.get("mem_pct"), host.get("vms"), host.get("vcpu_ratio"))),
@@ -254,6 +278,12 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                                   "%s %s%%" % (t.get("name"), t.get("cpu_pct")) for t in (host.get("top_vms") or [])),
                               "לאזן: vMotion של שרתים עמוסים ל-hosts שקטים (לבדוק DRS). הצרכנים הגדולים על ה-host: %s." % ", ".join(
                                   "%s %s%%" % (t.get("name"), t.get("cpu_pct")) for t in (host.get("top_vms") or [])))))
+        if not host_busy:
+            fnd = findings[-1]
+            fnd["title"] = _t("ESXi %s: high vCPU:core ratio (no contention in practice)" % host.get("name"),
+                              "ESXi %s: יחס vCPU:ליבה גבוה (ללא תחרות בפועל)" % host.get("name"))
+            fnd["detail"] = _t(fnd["detail"]["en"] + " Note: the host's CPU, RAM and Ready are low, so this is a capacity-planning flag (vCPU:core ratio) and not the cause of this VM's problem.",
+                               fnd["detail"]["he"] + " שים לב: ה-CPU, ה-RAM וה-Ready של ה-host נמוכים, ולכן זו התראת תכנון קיבולת (יחס vCPU:ליבה) ולא הסיבה לבעיה בשרת הזה.")
 
     # ---- Disks -----------------------------------------------------------------------------------
     if disks and disks.get("disks"):
