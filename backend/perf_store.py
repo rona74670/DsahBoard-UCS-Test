@@ -238,3 +238,36 @@ def get_stats() -> dict:
         d = conn.execute("SELECT COUNT(*) c, MIN(bucket) a, MAX(bucket) b FROM vm_perf_daily").fetchone()
     return {"hourly_rows": h["c"], "hourly_from": h["a"], "hourly_to": h["b"],
             "daily_rows": d["c"], "daily_from": d["a"], "daily_to": d["b"]}
+
+
+# ── Feedback on the "Analyze server" diagnosis (used to calibrate the rules) ──────────────────────
+
+def _init_feedback(conn) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS diag_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL, username TEXT DEFAULT '',
+            environment TEXT NOT NULL, vm_name TEXT NOT NULL, range_key TEXT DEFAULT '',
+            rating TEXT NOT NULL,            -- correct | partial | wrong
+            area TEXT DEFAULT '',            -- which finding was wrong (optional)
+            comment TEXT DEFAULT '',
+            result_json TEXT DEFAULT ''      -- the diagnosis the user saw (verdict, findings, facts)
+        )""")
+
+
+def save_feedback(username: str, env: str, vm: str, range_key: str, rating: str, area: str, comment: str, result_json: str) -> int:
+    from datetime import datetime
+    with get_db() as conn:
+        _init_feedback(conn)
+        cur = conn.execute(
+            """INSERT INTO diag_feedback (ts, username, environment, vm_name, range_key, rating, area, comment, result_json)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), username, env, vm, range_key, rating, area, comment, result_json))
+        return cur.lastrowid
+
+
+def list_feedback(limit: int = 200) -> list:
+    with get_db() as conn:
+        _init_feedback(conn)
+        rows = conn.execute("SELECT * FROM diag_feedback ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    return [dict(r) for r in rows]

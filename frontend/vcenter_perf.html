@@ -254,6 +254,7 @@
         <dt>מה זה</dt><dd>כפתור בראש כל שרת שנפתח. הוא בודק את כל המדדים של השרת (CPU, RAM, Ready, Co-Stop, Limit, לחץ זיכרון, ה-ESXi, דיסקים וגיבוי) לפי הכללים של הדשבורד, ומציג <b>ממצאים לפי חומרה</b>, מה לעשות בכל אחד, ותשובה ישירה לשאלה "האם צריך עוד מעבדים?".</dd>
         <dt>עברית / English</dt><dd>הכפתור בפינה מחליף בין שתי השפות. ההסבר של ה-AI תמיד באנגלית.</dd>
         <dt>הסבר מפורט (AI)</dt><dd>שולח את הנתונים המובנים של השרת למודל ה-AI הפנימי, שמסביר בשפה פשוטה מה הבעיה ובאיזה סדר לטפל. הוא מקבל רק את מה שמוצג, והאבחון עצמו נקבע לפי כללים, לא לפי ה-AI. זה גם מה שהצ'אט הצף 🤖 רואה אחרי שניתחת שרת.</dd>
+        <dt>דירוג האבחון (👍 🤔 👎)</dt><dd>בתחתית האבחון אפשר לסמן אם הוא היה <b>נכון, חלקי או לא נכון</b>, ולכתוב במשפט מה טעה. הדירוג נשמר יחד עם הנתונים שהאבחון ראה, ומשמש לתקן את הכללים והספים. <b>כל דירוג עוזר</b>, במיוחד "לא נכון".</dd>
         <dt>שים לב</dt><dd>זה מסנן ראשוני: הוא מצביע על כיוון, ואינו מחליף בדיקה בתוך השרת עצמו.</dd>
       </dl></details>
 
@@ -443,12 +444,60 @@ function diagInner(k) {
     html += '<div style="margin-top:.45rem;padding-top:.35rem;border-top:1px solid var(--border,#30363d)">' + SEV_ICON[f.sev] + ' <b>' + e(f.area) + ' — ' + e(diagTxt(f.title)) + '</b><br>' +
       e(diagTxt(f.detail)) + (f.action && diagTxt(f.action) ? '<br><span style="color:#58a6ff"><b>' + (he ? 'מה לעשות' : 'What to do') + ':</b> ' + e(diagTxt(f.action)) + '</span>' : '') + '</div>';
   });
+  html += fbHtml(k, r);
   html += '<div style="margin-top:.55rem">';
   if (_diagBusy[k] === 'ai') html += '<span class="muted">💬 ה-AI מנתח… (יכול לקחת כדקה)</span>';
   else html += '<button class="export-btn" onclick="explainDiag(this.closest(' + "'.diag-box'" + ').dataset.k)" title="שולח את הנתונים המובנים למודל ה-AI הפנימי; ההסבר באנגלית">💬 ' + (he ? 'הסבר מפורט (AI, באנגלית)' : 'Detailed explanation (AI)') + '</button>';
   if (_diagAi[k]) html += '<div dir="ltr" style="margin-top:.4rem;white-space:pre-wrap;text-align:left;color:var(--text)">' + e(_diagAi[k]) + '</div>';
   html += '</div></div>';
   return html;
+}
+// ── Feedback on a diagnosis: stored server-side and used to calibrate the rules ──
+var _diagFb = {};   // k -> {form: 'partial'|'wrong'} while the user writes a note, or {saved: true}
+function fbHtml(k, r) {
+  var st = _diagFb[k], he = _diagLang === 'he';
+  var box = 'margin-top:.55rem;padding-top:.4rem;border-top:1px solid var(--border,#30363d)';
+  if (st && st.saved) return '<div style="' + box + '"><span class="muted">✅ ' + (he ? 'תודה, הדירוג נשמר ויעזור לדייק את האבחון.' : 'Thanks, saved. It helps tune the diagnosis.') + '</span></div>';
+  if (st && st.form) {
+    var areas = (r.findings || []).map(function (f) { return f.area; }).filter(function (a, i, arr) { return arr.indexOf(a) === i; });
+    var opts = '<option value="">' + (he ? 'כללי / לא ברור איזה' : 'General') + '</option>' + areas.map(function (a) { return '<option>' + e(a) + '</option>'; }).join('');
+    return '<div style="' + box + '"><b>' + (st.form === 'wrong' ? (he ? 'מה לא נכון?' : 'What is wrong?') : (he ? 'מה חלקי?' : 'What is partly wrong?')) + '</b> ' +
+      '<select class="vc-select fb-area">' + opts + '</select> ' +
+      '<input class="vc-input fb-comment" style="min-width:320px" maxlength="500" placeholder="' + (he ? 'הסבר קצר: מה האבחון פספס או טעה' : 'Short note: what the diagnosis got wrong') + '"> ' +
+      '<button class="export-btn" onclick="fbSubmit(this.closest(' + "'.diag-box'" + ').dataset.k)">' + (he ? 'שלח' : 'Send') + '</button> ' +
+      '<button class="export-btn" onclick="fbCancel(this.closest(' + "'.diag-box'" + ').dataset.k)">' + (he ? 'ביטול' : 'Cancel') + '</button></div>';
+  }
+  function btn(rate, label) { return '<button class="export-btn" onclick="fbRate(this.closest(' + "'.diag-box'" + ').dataset.k, ' + "'" + rate + "'" + ')">' + label + '</button> '; }
+  return '<div style="' + box + '"><span class="muted">' + (he ? 'האבחון הזה:' : 'This diagnosis:') + '</span> ' +
+    btn('correct', '👍 ' + (he ? 'נכון' : 'Correct')) + btn('partial', '🤔 ' + (he ? 'חלקי' : 'Partly')) + btn('wrong', '👎 ' + (he ? 'לא נכון' : 'Wrong')) + '</div>';
+}
+function fbRate(k, rating) {
+  if (rating === 'correct') sendFb(k, 'correct', '', '');
+  else { _diagFb[k] = { form: rating }; paintDiag(k); }
+}
+function fbCancel(k) { delete _diagFb[k]; paintDiag(k); }
+function fbSubmit(k) {
+  var box = null;
+  document.querySelectorAll('.diag-box').forEach(function (b) { if (b.dataset.k === k) box = b; });
+  var area = box && box.querySelector('.fb-area') ? box.querySelector('.fb-area').value : '';
+  var comment = box && box.querySelector('.fb-comment') ? box.querySelector('.fb-comment').value : '';
+  sendFb(k, (_diagFb[k] || {}).form || 'wrong', area, comment);
+}
+async function sendFb(k, rating, area, comment) {
+  var r = _diag[k];
+  if (!r || r.error) return;
+  var i = k.indexOf('|');
+  try {
+    var resp = await fetch('/api/vcenter/perf/diagnose/feedback', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': window.getCsrfToken ? window.getCsrfToken() : '' },
+      body: JSON.stringify({ env: k.slice(0, i), name: k.slice(i + 1), range: _range, rating: rating, area: area, comment: comment,
+        result: { verdict: r.verdict, level: r.level, cpu_answer: r.cpu_answer, findings: r.findings, facts: r.facts } })
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    _diagFb[k] = { saved: true };
+  } catch (x) { alert('לא ניתן לשמור את הדירוג: ' + (x.message || x)); }
+  paintDiag(k);
 }
 function paintDiag(k) {
   document.querySelectorAll('.diag-box').forEach(function (b) { if (b.dataset.k === k) b.innerHTML = diagInner(k); });
@@ -458,7 +507,7 @@ function setDiagLang() { _diagLang = _diagLang === 'he' ? 'en' : 'he'; try { loc
 async function runDiag(k, force) {
   if (_diagBusy[k]) return;
   var i = k.indexOf('|'), env = k.slice(0, i), name = k.slice(i + 1);
-  _diagBusy[k] = 'run'; _diagLast = k; if (force) delete _diagAi[k]; paintDiag(k);
+  _diagBusy[k] = 'run'; _diagLast = k; delete _diagFb[k]; if (force) delete _diagAi[k]; paintDiag(k);
   try {
     var r = await fetch('/api/vcenter/perf/diagnose?env=' + encodeURIComponent(env) + '&name=' + encodeURIComponent(name) + '&range=' + _range, { credentials: 'include' });
     if (!r.ok) throw new Error('HTTP ' + r.status);

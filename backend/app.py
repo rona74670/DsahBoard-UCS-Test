@@ -1577,6 +1577,63 @@ def api_vcenter_perf_diagnose(env: str, name: str, range: str = "7d"):
     return perf_diagnose.diagnose(env, name, range, summary, host, disks, backups)
 
 
+class DiagFeedbackIn(BaseModel):
+    env: str
+    name: str
+    range: str = ""
+    rating: str                    # correct | partial | wrong
+    area: str = ""
+    comment: str = ""
+    result: dict = {}
+
+
+@app.post("/api/vcenter/perf/diagnose/feedback")
+def api_vcenter_perf_diagnose_feedback(payload: DiagFeedbackIn, user: dict = Depends(get_current_user)):
+    """Stores the user's verdict on a diagnosis (correct / partial / wrong + comment) to calibrate the rules."""
+    import json as _json
+    if payload.rating not in ("correct", "partial", "wrong"):
+        raise HTTPException(status_code=400, detail="Invalid rating")
+    blob = _json.dumps(payload.result, ensure_ascii=False)
+    if len(blob) > 40000:
+        raise HTTPException(status_code=413, detail="Result too large")
+    fid = perf_store.save_feedback(str(user.get("username", "")), payload.env[:40], payload.name[:200], payload.range[:10],
+                                   payload.rating, payload.area[:60], payload.comment[:1000], blob)
+    return {"status": "ok", "id": fid}
+
+
+@app.get("/api/vcenter/perf/diagnose/feedback", dependencies=[Depends(require_admin)])
+def api_vcenter_perf_diagnose_feedback_list(format: str = "json", limit: int = 200):
+    """Admin: the stored feedback; format=text is a compact digest to review and calibrate the rules from."""
+    import json as _json
+    from fastapi.responses import PlainTextResponse
+    rows = perf_store.list_feedback(max(1, min(limit, 500)))
+    if format != "text":
+        return {"data": rows}
+    counts, wrong_area = {}, {}
+    for r in rows:
+        counts[r["rating"]] = counts.get(r["rating"], 0) + 1
+        if r["rating"] != "correct":
+            wrong_area[r["area"] or "(general)"] = wrong_area.get(r["area"] or "(general)", 0) + 1
+    lines = ["Diagnosis feedback: %s" % counts, "Not-correct by area: %s" % wrong_area, ""]
+    for r in rows:
+        try:
+            res = _json.loads(r["result_json"] or "{}")
+        except Exception:
+            res = {}
+        facts = res.get("facts", {})
+        lines.append("#%s %s %s | %s/%s | range %s | rating=%s area=%s" % (r["id"], r["ts"], r["username"], r["environment"], r["vm_name"], r["range_key"], r["rating"], r["area"] or "-"))
+        if r["comment"]:
+            lines.append("  comment: %s" % r["comment"])
+        lines.append("  verdict: %s" % ((res.get("verdict") or {}).get("en", "")))
+        if res.get("cpu_answer"):
+            lines.append("  cpu answer: %s" % res["cpu_answer"].get("en", ""))
+        for f in res.get("findings", []):
+            lines.append("  - [%s] %s: %s" % (f.get("sev"), f.get("area"), (f.get("title") or {}).get("en", "")))
+        lines.append("  facts: %s" % _json.dumps(facts, ensure_ascii=False))
+        lines.append("")
+    return PlainTextResponse("\n".join(lines), media_type="text/plain; charset=utf-8")
+
+
 @app.get("/api/vcenter/perf/rightsizing")
 def api_vcenter_perf_rightsizing(env: str | None = None, days: int = 30, min_days: int = 14,
                                  cpu_target: float = 70, mem_target: float = 80):

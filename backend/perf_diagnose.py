@@ -129,6 +129,8 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
     # "Busy" = real CPU/RAM load, Ready or swap on the host. A warning caused only by the vCPU:core ratio is a
     # capacity-planning flag, not contention (Ready shows whether VMs actually wait), so it must not be blamed
     # for this VM's CPU.
+    host_cpu_busy = bool(host) and (host.get("level") == "down" or (host.get("cpu_pct") or 0) >= 75
+                                    or (host.get("ready_avg") or 0) >= 3)
     host_busy = bool(host) and (host.get("level") == "down" or (host.get("cpu_pct") or 0) >= 75
                                 or (host.get("ready_avg") or 0) >= 3 or (host.get("mem_pct") or 0) >= 85
                                 or bool(host.get("mp_swap_vms")))
@@ -167,7 +169,7 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
             act = _t("Recurring Co-Stop means too many vCPUs: reduce vCPUs (start with 1-2) instead of adding.",
                      "Co-Stop חוזר מעיד על יותר מדי vCPUs: להפחית vCPUs (להתחיל ב-1-2) ולא להוסיף.")
             cpu_answer = _t("No - it already has too many vCPUs (Co-Stop).", "לא - יש לו כבר יותר מדי vCPUs (Co-Stop).")
-        elif rdy_lv >= 2 or host_busy:
+        elif rdy_lv >= 2 or host_cpu_busy:
             act = _t("The VM waits for physical CPU (Ready / busy host): move it to a quieter host (vMotion) or relieve the host. Do not add vCPUs.",
                      "השרת מחכה למעבד פיזי (Ready / host עמוס): להעביר ל-host שקט יותר (vMotion) או לפנות את ה-host. לא להוסיף vCPUs.")
             cpu_answer = _t("No - the cause is host contention, not VM size.", "לא - הסיבה היא עומס על ה-host ולא גודל השרת.")
@@ -184,8 +186,8 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                 need = min(int(vcpu or 2) * 2, max(int(vcpu or 2) + 1, int(math.ceil((vcpu or 2) * avg / 55.0))))
                 if need >= 4:
                     need += need % 2
-                room_en = " The host has headroom (CPU %s%%, Ready %s%%)." % (host.get("cpu_pct"), host.get("ready_avg")) if host and not host_busy else ""
-                room_he = " ל-host יש מקום (CPU %s%%, Ready %s%%)." % (host.get("cpu_pct"), host.get("ready_avg")) if host and not host_busy else ""
+                room_en = " The host has CPU headroom (CPU %s%%, Ready %s%%)." % (host.get("cpu_pct"), host.get("ready_avg")) if host and not host_cpu_busy else ""
+                room_he = " ל-host יש מקום ב-CPU (CPU %s%%, Ready %s%%)." % (host.get("cpu_pct"), host.get("ready_avg")) if host and not host_cpu_busy else ""
                 act = _t("The VM keeps a high CPU average (%s%% on %s vCPUs) with no contention (Ready, Co-Stop and the host are fine), so it genuinely "
                          "needs more CPU or its workload is heavy. For a database/application server first check the top CPU consumers inside it "
                          "(heaviest queries, missing indexes, scheduled jobs). If the load is legitimate add vCPUs in small steps (about %s vCPUs as a "
@@ -201,6 +203,23 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                          act["he"] + " שים לב: ממוצע ה-CPU נמוך ביחס ל-%s vCPUs - עומס קופצני, לא חוסר קיבולת." % vcpu)
                 cpu_answer = _t("Probably not - 100% bursts on an otherwise idle VM point to a runaway process or job.",
                                 "כנראה שלא - קפיצות ל-100% בשרת שברוב הזמן פנוי מעידות על תהליך תקוע או משימה.")
+            elif _pct(s.get("cpu_n_high"), n) >= 5:
+                share = _pct(s.get("cpu_n_high"), n)
+                room_en = " The host has CPU headroom (CPU %s%%)." % host.get("cpu_pct") if host and not host_cpu_busy else ""
+                room_he = " ל-host יש מקום ב-CPU (CPU %s%%)." % host.get("cpu_pct") if host and not host_cpu_busy else ""
+                big = (vcpu or 0) >= 16
+                numa_en = " (a VM with this many vCPUs may already span NUMA nodes, so more vCPUs can add Co-Stop)" if big else ""
+                numa_he = " (לשרת עם כל כך הרבה vCPUs ייתכן שכבר יש פריסה על כמה צמתי NUMA, ותוספת עלולה להגדיל Co-Stop)" if big else ""
+                act = _t("Bursty load: the average is only %s%% but the VM is at >=85%% for %s%% of the time, with no contention (Ready, Co-Stop and the host CPU are fine). "
+                         "This looks like batch / ETL / reporting jobs that use all vCPUs for a while. First check whether the bursts hurt (jobs overrun their window, "
+                         "users complain). If not, no change is needed. If they do, more vCPUs can shorten the bursts only when the work is parallel; add in small steps "
+                         "(a few at a time)%s, or move/spread the heavy jobs.%s" % (round(s.get("avg_cpu_pct") or 0, 1), share, numa_en, room_en),
+                         "עומס קופצני: הממוצע רק %s%% אבל השרת מעל 85%% במשך %s%% מהזמן, ללא תחרות (Ready, Co-Stop וה-CPU של ה-host תקינים). "
+                         "נראה כמו משימות batch / ETL / דוחות שמנצלות את כל ה-vCPUs לזמן מה. קודם לבדוק אם הקפיצות פוגעות (משימות חורגות מהחלון, "
+                         "תלונות משתמשים). אם לא - אין צורך בשינוי. אם כן - תוספת vCPUs מקצרת את הקפיצות רק אם העבודה מקבילית; להוסיף בצעדים קטנים "
+                         "(כמה בכל פעם)%s, או להזיז/לפזר את המשימות הכבדות.%s" % (round(s.get("avg_cpu_pct") or 0, 1), share, numa_he, room_he))
+                cpu_answer = _t("Not necessarily - the load is bursty (average %s%%). Only if the bursts hurt (jobs overrun, users complain); then add vCPUs in small steps." % round(s.get("avg_cpu_pct") or 0, 1),
+                                "לא בהכרח - העומס קופצני (ממוצע %s%%). רק אם הקפיצות פוגעות (משימות חורגות, תלונות משתמשים); אז להוסיף vCPUs בצעדים קטנים." % round(s.get("avg_cpu_pct") or 0, 1))
         findings.append(_f(sev, "CPU", title, detail, act))
     elif cpu_lv == 1:
         findings.append(_f("info", "CPU", _t("CPU: one-off peak", "CPU: פיק חד-פעמי"),
