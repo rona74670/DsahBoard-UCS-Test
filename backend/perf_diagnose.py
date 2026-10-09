@@ -42,7 +42,7 @@ def _load_level(n, n_mid, n_high, hot, buckets) -> int:
         return -1
     sh, sm = n_high * 100.0 / n, n_mid * 100.0 / n
     hp = hot * 100.0 / buckets if buckets else 0
-    if sh >= 3 or (hot >= 3 and hp >= 20):
+    if sh >= 3:
         return 3
     if sm >= 20 or hot >= 2 or sh >= 0.5:
         return 2
@@ -132,8 +132,7 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
     host_cpu_busy = bool(host) and (host.get("level") == "down" or (host.get("cpu_pct") or 0) >= 75
                                     or (host.get("ready_avg") or 0) >= 3)
     host_busy = bool(host) and (host.get("level") == "down" or (host.get("cpu_pct") or 0) >= 75
-                                or (host.get("ready_avg") or 0) >= 3 or (host.get("mem_pct") or 0) >= 85
-                                or bool(host.get("mp_swap_vms")))
+                                or (host.get("ready_avg") or 0) >= 3 or (host.get("mem_pct") or 0) >= 85)
     facts.update({
         "cpu_load_level": cpu_lv, "ram_load_level": mem_lv, "ready_level": rdy_lv,
         "cpu_pct_time_ge85": _pct(s.get("cpu_n_high"), n), "ram_pct_time_ge85": _pct(s.get("mem_n_high"), n),
@@ -151,6 +150,8 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
 
     # ---- CPU ----------------------------------------------------------------------------------
     cpu_answer = _t("No - CPU is not a sustained problem.", "לא - ה-CPU אינו בעיה מתמשכת.")
+    avg_cpu = s.get("avg_cpu_pct") or 0
+    share_hi = _pct(s.get("cpu_n_high"), n)
     if cpu_lv >= 2:
         sev = "crit" if cpu_lv == 3 else "warn"
         title = _t("CPU is %s" % ("saturated" if cpu_lv == 3 else "often high"),
@@ -181,7 +182,19 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                      "ואת השעות. אם העומס לגיטימי ומרובה threads לשקול scale-out או תוספת vCPUs בזהירות; קפיצה חדה ל-100% מעידה בדרך כלל על תהליך תקוע או משימה.")
             cpu_answer = _t("Maybe - only if the load is legitimate; first find the cause inside the server.",
                             "אולי - רק אם העומס לגיטימי; קודם לאתר את הסיבה בתוך השרת.")
-            if (s.get("avg_cpu_pct") or 0) >= 50:
+            if avg_cpu >= 90 and share_hi >= 80:
+                sev = "crit"
+                title = _t("CPU is pegged at 100%", "ה-CPU תקוע על 100%")
+                act = _t("The VM sits at about 100%% CPU almost all the time (average %s%%, >=85%% for %s%% of the time) with no contention. That is not a normal "
+                         "workload: look for a stuck or looping process or a service in a retry loop (Task Manager/top, application logs). A restored or cloned VM "
+                         "may also be running a duplicate job. Add vCPUs only if the load is proven legitimate." % (round(avg_cpu, 1), share_hi),
+                         "השרת כמעט כל הזמן על כ-100%% CPU (ממוצע %s%%, מעל 85%% במשך %s%% מהזמן) ללא תחרות. זה לא עומס עבודה רגיל: לחפש תהליך תקוע או בלולאה, "
+                         "או שירות שנתקע ב-retry (Task Manager/top, לוגים של האפליקציה). שרת ששוחזר/שוכפל עלול להריץ גם משימה כפולה. "
+                         "להוסיף vCPUs רק אם הוכח שהעומס לגיטימי." % (round(avg_cpu, 1), share_hi))
+                cpu_answer = _t("Not yet - first find out why it is pegged at 100% (likely a stuck process); more vCPUs may just feed it.",
+                                "עדיין לא - קודם להבין למה הוא תקוע על 100% (כנראה תהליך תקוע); תוספת vCPUs רק תזין אותו.")
+            elif avg_cpu >= 50:
+                sev = "crit"
                 avg = s.get("avg_cpu_pct") or 0
                 need = min(int(vcpu or 2) * 2, max(int(vcpu or 2) + 1, int(math.ceil((vcpu or 2) * avg / 55.0))))
                 if need >= 4:
@@ -198,12 +211,9 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                 cpu_answer = _t("Yes, probably - sustained high CPU (average %s%%) with no contention. Check the heaviest workload first, then add vCPUs "
                                 "in small steps (about %s)." % (round(avg, 1), need),
                                 "כנראה כן - CPU גבוה באופן מתמשך (ממוצע %s%%) ללא תחרות. קודם לבדוק מה העומס הכבד, ואז להוסיף vCPUs בצעדים קטנים (כ-%s)." % (round(avg, 1), need))
-            elif (vcpu or 0) >= 16 and (s.get("avg_cpu_pct") or 0) < 30:
-                act = _t(act["en"] + " Note: average CPU is low for %s vCPUs - spiky load, not a capacity shortage." % vcpu,
-                         act["he"] + " שים לב: ממוצע ה-CPU נמוך ביחס ל-%s vCPUs - עומס קופצני, לא חוסר קיבולת." % vcpu)
-                cpu_answer = _t("Probably not - 100% bursts on an otherwise idle VM point to a runaway process or job.",
-                                "כנראה שלא - קפיצות ל-100% בשרת שברוב הזמן פנוי מעידות על תהליך תקוע או משימה.")
-            elif _pct(s.get("cpu_n_high"), n) >= 5:
+            elif share_hi >= 3:
+                sev = "warn"
+                title = _t("Bursty high CPU load", "עומס CPU גבוה וקופצני")
                 share = _pct(s.get("cpu_n_high"), n)
                 room_en = " The host has CPU headroom (CPU %s%%)." % host.get("cpu_pct") if host and not host_cpu_busy else ""
                 room_he = " ל-host יש מקום ב-CPU (CPU %s%%)." % host.get("cpu_pct") if host and not host_cpu_busy else ""
@@ -220,6 +230,21 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                          "(כמה בכל פעם)%s, או להזיז/לפזר את המשימות הכבדות.%s" % (round(s.get("avg_cpu_pct") or 0, 1), share, numa_he, room_he))
                 cpu_answer = _t("Not necessarily - the load is bursty (average %s%%). Only if the bursts hurt (jobs overrun, users complain); then add vCPUs in small steps." % round(s.get("avg_cpu_pct") or 0, 1),
                                 "לא בהכרח - העומס קופצני (ממוצע %s%%). רק אם הקפיצות פוגעות (משימות חורגות, תלונות משתמשים); אז להוסיף vCPUs בצעדים קטנים." % round(s.get("avg_cpu_pct") or 0, 1))
+            else:
+                # short recurring bursts: >=85% for under 3% of the time, but on several days/hours (a nightly job, a scan)
+                sev = "info"
+                unit1_en, unit1_he = ("hour", "שעה") if range_key == "24h" else ("day", "יום")
+                per_bucket = int(round((s.get("cpu_n_high") or 0) / float(buckets or 1)))
+                title = _t("Short recurring CPU bursts", "קפיצות CPU קצרות וחוזרות")
+                detail = _t("CPU >=85%% for only %s%% of the time (about %s min per %s) but on %s of %s %s; peak %s%% at %s, average %s%%, %s vCPUs." % (
+                                share_hi, per_bucket, unit1_en, s.get("cpu_hot_buckets") or 0, buckets, unit_en, s.get("max_cpu_pct"), s.get("max_cpu_ts"), round(avg_cpu, 1), vcpu),
+                            "CPU מעל 85%% רק %s%% מהזמן (כ-%s דקות ל%s) אבל ב-%s מתוך %s %s; שיא %s%% ב-%s, ממוצע %s%%, %s vCPUs." % (
+                                share_hi, per_bucket, unit1_he, s.get("cpu_hot_buckets") or 0, buckets, unit_he, s.get("max_cpu_pct"), s.get("max_cpu_ts"), round(avg_cpu, 1), vcpu))
+                act = _t("Looks like a scheduled job (backup, antivirus scan, report, batch) that runs at about the same time. This is not a sizing problem: find the job "
+                         "from the peak time (%s) and decide whether it can be moved. No change to vCPUs is needed." % s.get("max_cpu_ts"),
+                         "נראה כמו משימה מתוזמנת (גיבוי, סריקת אנטי-וירוס, דוח, batch) שרצה בערך באותה שעה. זו לא בעיית גודל: לאתר את המשימה לפי זמן השיא (%s) "
+                         "ולהחליט אם אפשר להזיז אותה. אין צורך לשנות vCPUs." % s.get("max_cpu_ts"))
+                cpu_answer = _t("No - short scheduled bursts, not a capacity problem.", "לא - קפיצות קצרות ומתוזמנות, לא בעיית קיבולת.")
         findings.append(_f(sev, "CPU", title, detail, act))
     elif cpu_lv == 1:
         findings.append(_f("info", "CPU", _t("CPU: one-off peak", "CPU: פיק חד-פעמי"),
@@ -272,8 +297,10 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
         db_en = " This looks like a database/cache/directory (Active Directory DC) server: they keep memory as cache on purpose, so high RAM is normal and the number cannot tell whether more RAM is needed (check Page Life Expectancy / paging inside the guest)." if is_db else ""
         db_he = " נראה שזה שרת DB/Cache/Active Directory (DC): שרתים כאלה מחזיקים זיכרון כ-cache בכוונה, ולכן RAM גבוה תקין והמספר לא אומר אם צריך עוד (לבדוק Page Life Expectancy / paging בתוך השרת)." if is_db else ""
         has_press = swap or balloon or mlat >= 1
-        findings.append(_f("info" if is_db else ("warn" if not has_press else "warn"), "Memory",
-                           _t("Guest memory usage is high", "ניצול הזיכרון בשרת גבוה"),
+        mem_sustained = (s.get("avg_mem_pct") or 0) >= 60 or _pct(s.get("mem_n_high"), n) >= 10
+        findings.append(_f("info" if (is_db or not mem_sustained) else "warn", "Memory",
+                           _t("Guest memory usage is high" if mem_sustained else "Brief memory spikes",
+                              "ניצול הזיכרון בשרת גבוה" if mem_sustained else "קפיצות זיכרון קצרות"),
                            _t("Active RAM >=85%% for %s%% of the time (peak %s%% at %s) of %s GB.%s" % (
                                   _pct(s.get("mem_n_high"), n), s.get("max_mem_pct"), s.get("max_mem_ts"), ram_gb, db_en),
                               "RAM פעיל מעל 85%% במשך %s%% מהזמן (שיא %s%% ב-%s) מתוך %s GB.%s" % (
@@ -282,6 +309,9 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                               "No host-side starvation was seen." if not has_press else "Host-side memory pressure is present too (see above).",
                               "זיכרון פעיל הוא הערכה מדגימה. לבדוק שימוש ב-pagefile/swap בתוך השרת בזמן השיא; אם יש paging כבד - להוסיף RAM. "
                               "לא נראתה מצוקת זיכרון מצד ה-host." if not has_press else "יש גם לחץ זיכרון מצד ה-host (ראה למעלה).")))
+        if not mem_sustained and not has_press:
+            findings[-1]["action"] = _t("Average RAM is low (%s%%) and the spikes are short, which is typical for updates or antivirus scans: no action unless users complain." % round(s.get("avg_mem_pct") or 0, 1),
+                                        "ממוצע ה-RAM נמוך (%s%%) והקפיצות קצרות, דבר אופייני לעדכונים או סריקות אנטי-וירוס: אין צורך בפעולה אלא אם יש תלונות משתמשים." % round(s.get("avg_mem_pct") or 0, 1))
 
     # ---- ESXi host -------------------------------------------------------------------------------
     if host is None:
@@ -289,20 +319,30 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                            _t("The host could not be determined (VM off, or the collector just restarted).", "לא ניתן לקבוע את ה-host (השרת כבוי, או שהאיסוף הופעל מחדש לאחרונה)."),
                            _t("Try again in a minute.", "לנסות שוב בעוד דקה.")))
     elif host_bad:
-        findings.append(_f(("crit" if host.get("level") in ("crit", "down") else "warn") if host_busy else "info", "ESXi",
-                           _t("The ESXi host %s is under load" % host.get("name"), "ה-ESXi %s תחת עומס" % host.get("name")),
-                           _t("%s. CPU %s%%, RAM %s%%, %s VMs, vCPU:core %s:1." % ("; ".join(host.get("reasons") or []), host.get("cpu_pct"), host.get("mem_pct"), host.get("vms"), host.get("vcpu_ratio")),
-                              "%s. CPU %s%%, RAM %s%%, %s שרתים, יחס vCPU:ליבה %s:1." % ("; ".join(host.get("reasons") or []), host.get("cpu_pct"), host.get("mem_pct"), host.get("vms"), host.get("vcpu_ratio"))),
-                           _t("Rebalance: vMotion busy VMs to quieter hosts (check DRS). Top consumers on this host: %s." % ", ".join(
-                                  "%s %s%%" % (t.get("name"), t.get("cpu_pct")) for t in (host.get("top_vms") or [])),
-                              "לאזן: vMotion של שרתים עמוסים ל-hosts שקטים (לבדוק DRS). הצרכנים הגדולים על ה-host: %s." % ", ".join(
-                                  "%s %s%%" % (t.get("name"), t.get("cpu_pct")) for t in (host.get("top_vms") or [])))))
-        if not host_busy:
-            fnd = findings[-1]
-            fnd["title"] = _t("ESXi %s: high vCPU:core ratio (no contention in practice)" % host.get("name"),
-                              "ESXi %s: יחס vCPU:ליבה גבוה (ללא תחרות בפועל)" % host.get("name"))
-            fnd["detail"] = _t(fnd["detail"]["en"] + " Note: the host's CPU, RAM and Ready are low, so this is a capacity-planning flag (vCPU:core ratio) and not the cause of this VM's problem.",
-                               fnd["detail"]["he"] + " שים לב: ה-CPU, ה-RAM וה-Ready של ה-host נמוכים, ולכן זו התראת תכנון קיבולת (יחס vCPU:ליבה) ולא הסיבה לבעיה בשרת הזה.")
+        reasons_he = host.get("reasons") or []
+        reasons_en = host.get("reasons_en") or reasons_he
+        crit = (host.get("level") == "down" or (host.get("cpu_pct") or 0) >= 90 or (host.get("ready_avg") or 0) >= 5
+                or (host.get("mem_pct") or 0) >= 95)
+        sev = ("crit" if crit else "warn") if host_busy else "info"
+        top_en = ", ".join("%s %s%%" % (t.get("name"), t.get("cpu_pct")) for t in (host.get("top_vms") or []))
+        swapv = host.get("mp_swap_vms") or 0
+        swap_en = (" %s other VM(s) on this host are swapping memory (often caused by a Memory Limit set on them)." % swapv) if swapv and not swap else ""
+        swap_he = (" ב-host יש עוד %s שרתים עם swap (לעיתים בגלל Memory Limit שהוגדר להם)." % swapv) if swapv and not swap else ""
+        base_en = "%s. CPU %s%%, RAM %s%%, %s VMs, vCPU:core %s:1." % ("; ".join(reasons_en), host.get("cpu_pct"), host.get("mem_pct"), host.get("vms"), host.get("vcpu_ratio"))
+        base_he = "%s. CPU %s%%, RAM %s%%, %s שרתים, יחס vCPU:ליבה %s:1." % ("; ".join(reasons_he), host.get("cpu_pct"), host.get("mem_pct"), host.get("vms"), host.get("vcpu_ratio"))
+        if host_busy:
+            findings.append(_f(sev, "ESXi",
+                               _t("The ESXi host %s is under load" % host.get("name"), "ה-ESXi %s תחת עומס" % host.get("name")),
+                               _t(base_en + swap_en, base_he + swap_he),
+                               _t("Rebalance: vMotion busy VMs to quieter hosts (check DRS). Top consumers on this host: %s." % top_en,
+                                  "לאזן: vMotion של שרתים עמוסים ל-hosts שקטים (לבדוק DRS). הצרכנים הגדולים על ה-host: %s." % top_en)))
+        else:
+            findings.append(_f("info", "ESXi",
+                               _t("ESXi %s: no contention affecting this VM" % host.get("name"), "ESXi %s: אין תחרות שמשפיעה על השרת הזה" % host.get("name")),
+                               _t(base_en + swap_en + " The host's CPU, RAM and Ready are low, so this is a capacity-planning note and not the cause of this VM's problem.",
+                                  base_he + swap_he + " ה-CPU, ה-RAM וה-Ready של ה-host נמוכים, ולכן זו הערת תכנון קיבולת ולא הסיבה לבעיה בשרת הזה."),
+                               _t("No action needed for this VM. Planning: keep the vCPU:core ratio reasonable when adding VMs to this host.",
+                                  "אין צורך בפעולה לשרת הזה. לתכנון: לשמור על יחס vCPU:ליבה סביר כשמוסיפים שרתים ל-host.")))
 
     # ---- Disks -----------------------------------------------------------------------------------
     if disks and disks.get("disks"):

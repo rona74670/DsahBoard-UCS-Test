@@ -43,39 +43,44 @@ HOST_RATIO_WARN = 4       # vCPU : physical core
 
 
 def _host_verdict(h: dict) -> None:
-    """Adds "level" (ok|warn|crit|down) and "reasons" to a host dict."""
-    reasons, level = [], [0]
+    """Adds "level" (ok|warn|crit|down), "reasons" (Hebrew) and "reasons_en" (English) to a host dict."""
+    reasons, reasons_en, level = [], [], [0]
     if h["connection"] != "connected":
-        h["level"], h["reasons"] = "down", ["ESXi לא מחובר (" + h["connection"] + ")"]
+        h["level"] = "down"
+        h["reasons"] = ["ESXi לא מחובר (" + h["connection"] + ")"]
+        h["reasons_en"] = ["ESXi not connected (" + h["connection"] + ")"]
         return
 
-    def bump(lv, text):
+    def bump(lv, he, en):
         level[0] = max(level[0], lv)
-        reasons.append(text)
+        reasons.append(he)
+        reasons_en.append(en)
 
     if h["cpu_pct"] >= HOST_CPU_CRIT:
-        bump(2, "CPU של ה-ESXi " + str(h["cpu_pct"]) + "%")
+        bump(2, "CPU של ה-ESXi " + str(h["cpu_pct"]) + "%", "ESXi CPU " + str(h["cpu_pct"]) + "%")
     elif h["cpu_pct"] >= HOST_CPU_WARN:
-        bump(1, "CPU של ה-ESXi " + str(h["cpu_pct"]) + "%")
+        bump(1, "CPU של ה-ESXi " + str(h["cpu_pct"]) + "%", "ESXi CPU " + str(h["cpu_pct"]) + "%")
     if h["mem_pct"] >= HOST_MEM_CRIT:
-        bump(2, "RAM של ה-ESXi " + str(h["mem_pct"]) + "%")
+        bump(2, "RAM של ה-ESXi " + str(h["mem_pct"]) + "%", "ESXi RAM " + str(h["mem_pct"]) + "%")
     elif h["mem_pct"] >= HOST_MEM_WARN:
-        bump(1, "RAM של ה-ESXi " + str(h["mem_pct"]) + "%")
+        bump(1, "RAM של ה-ESXi " + str(h["mem_pct"]) + "%", "ESXi RAM " + str(h["mem_pct"]) + "%")
     if h["ready_avg"] is not None:
         if h["ready_avg"] >= HOST_READY_CRIT:
-            bump(2, "CPU Ready ממוצע " + str(h["ready_avg"]) + "% לכל vCPU")
+            bump(2, "CPU Ready ממוצע " + str(h["ready_avg"]) + "% לכל vCPU", "CPU Ready average " + str(h["ready_avg"]) + "% per vCPU")
         elif h["ready_avg"] >= HOST_READY_WARN:
-            bump(1, "CPU Ready ממוצע " + str(h["ready_avg"]) + "% לכל vCPU")
+            bump(1, "CPU Ready ממוצע " + str(h["ready_avg"]) + "% לכל vCPU", "CPU Ready average " + str(h["ready_avg"]) + "% per vCPU")
     if h["cores"] and h["vcpu_ratio"] > HOST_RATIO_WARN:
-        bump(1, "יחס vCPU:ליבה " + str(h["vcpu_ratio"]) + ":1")
+        bump(1, "יחס vCPU:ליבה " + str(h["vcpu_ratio"]) + ":1", "vCPU:core ratio " + str(h["vcpu_ratio"]) + ":1")
     if h.get("mp_swap_vms"):
-        bump(2, str(h["mp_swap_vms"]) + " VMs עם swap של זיכרון על ה-host")
+        bump(2, str(h["mp_swap_vms"]) + " VMs עם swap של זיכרון על ה-host", str(h["mp_swap_vms"]) + " VMs with memory swap on the host")
     elif h.get("mp_balloon_vms"):
-        bump(1, str(h["mp_balloon_vms"]) + " VMs עם Balloon על ה-host")
+        bump(1, str(h["mp_balloon_vms"]) + " VMs עם Balloon על ה-host", str(h["mp_balloon_vms"]) + " VMs with balloon on the host")
     if h["maintenance"]:
         reasons.append("במצב Maintenance")
+        reasons_en.append("in Maintenance mode")
     h["level"] = ("ok", "warn", "crit")[level[0]]
     h["reasons"] = reasons
+    h["reasons_en"] = reasons_en
 
 
 def _update_live(env: str, si, samples: list) -> None:

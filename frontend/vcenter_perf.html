@@ -147,7 +147,7 @@
         <dt>פיק</dt><dd>הדקה הכי עמוסה בטווח שבחרת (ומתי היא קרתה).</dd>
         <dt>ממוצע</dt><dd>הרמה הרגילה של השרת לאורך הטווח. <b>פיק גבוה + ממוצע נמוך = קפיצה חד-פעמית.</b> פיק גבוה + ממוצע גבוה = שרת שעובד קשה כל הזמן.</dd>
         <dt>vCPU / RAM (GB)</dt><dd>כמה מעבדים (וירטואליים) וכמה זיכרון הוגדרו לשרת.</dd>
-        <dt>מד עומס</dt><dd>סיכום מהיר: האם העומס הוא מקרי או חוזר.<br>🟢 תקין · ⚪ פיק חד-פעמי (נגע בעומס גבוה אבל לא חוזר) · 🟠 לתשומת לב (עומס בינוני לאחוז גדול מהזמן, או עומס גבוה בכמה שעות/ימים) · 🔴 בעייתי (עומס גבוה בחלק משמעותי מהזמן או שחוזר שוב ושוב). ריחוף על התג מסביר למה.</dd>
+        <dt>מד עומס</dt><dd>סיכום מהיר: האם העומס הוא מקרי או חוזר.<br>🟢 תקין · ⚪ פיק חד-פעמי (נגע בעומס גבוה אבל לא חוזר) · 🟠 לתשומת לב (עומס בינוני לאחוז גדול מהזמן, או קפיצות קצרות שחוזרות בכמה שעות/ימים, למשל משימה לילית) · 🔴 בעייתי (עומס מעל 85% במשך לפחות 3% מהזמן, כחמש שעות בשבוע). ריחוף על התג מסביר למה.</dd>
         <dt>סף CPU / סף RAM</dt><dd>הערכים שמעליהם שרת נחשב "עבר את הסף" (ברירת מחדל 80% ו-85%). אפשר לשנות בשורת הסינון. הקו האדום המקווקו בגרף הוא הסף של ה-CPU.</dd>
       </dl></details>
 
@@ -604,8 +604,11 @@ function pctHtml(v, thr) {
 // ── Load meter: tells a one-off spike from recurring load ──────────────────
 // Per resource the collector counts minutes at >= 70% ("medium") and >= 85% ("high"), and in how
 // many hours/days the VM had a meaningful stretch of high load ("hot" buckets).
-//   problematic : high load >= 3% of the time, or hot in >= 3 buckets covering >= 20% of the range
-//   attention   : medium load >= 20% of the time, or hot in >= 2 buckets, or high load >= 0.5%
+//   problematic : high load (>= 85%) for >= 3% of the time (about 5 hours in a week)
+//   attention   : medium load >= 20% of the time, or hot in >= 2 buckets (short recurring bursts, e.g. a nightly job),
+//                 or high load >= 0.5%
+//   (Calibrated 2026-10-09 against the diagnosis: recurring SHORT bursts used to be "problematic" - 50 servers - and are
+//    now "attention"; "problematic" = 22 servers, in line with what the diagnosis flags as needing action.)
 //   one-off     : touched high load but rarely (a spike, not a pattern)
 var LV_LABEL = {3: '🔴 בעייתי', 2: '🟠 לתשומת לב', 1: '⚪ פיק חד-פעמי', 0: '🟢 תקין', '-1': '— מעט נתונים'};
 function resLevel(name, n, nMid, nHigh, hotB, buckets) {
@@ -613,7 +616,7 @@ function resLevel(name, n, nMid, nHigh, hotB, buckets) {
   var sh = nHigh / n * 100, sm = nMid / n * 100, hp = buckets ? hotB / buckets * 100 : 0;
   var unit = _range === '24h' ? 'שעות' : 'ימים';
   var lv = 0;
-  if (sh >= 3 || (hotB >= 3 && hp >= 20)) lv = 3;
+  if (sh >= 3) lv = 3;
   else if (sm >= 20 || hotB >= 2 || sh >= 0.5) lv = 2;
   else if (nHigh >= 1) lv = 1;
   var why = name + ': ≥85% ב-' + (Math.round(sh * 10) / 10) + '% מהזמן · ≥70% ב-' + (Math.round(sm * 10) / 10) + '% · עומס גבוה ב-' + hotB + ' מתוך ' + buckets + ' ' + unit;

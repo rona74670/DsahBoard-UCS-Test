@@ -2862,6 +2862,21 @@ def api_ai_benchmark_start(model: str = ""):
     return ai_benchmark.start(names, _AI_SYSTEM_PROMPT)
 
 
+@app.get("/api/vcenter/perf/diagnose/batch/start", dependencies=[Depends(require_admin)])
+def api_diag_batch_start(range: str = "7d", min_level: int = 3, ai: int = 0, limit: int = 80):
+    """Admin: diagnose all VMs at/above a load level (3 = problematic) in the background and write
+    logs/diagnose_batch_*.txt (optionally with the Ollama explanation of each) for review and calibration."""
+    import diag_batch
+    since, table = _perf_since(range)
+    return diag_batch.start(range, since, table, max(1, min(min_level, 3)), bool(ai), max(1, min(limit, 300)), _AI_SYSTEM_PROMPT)
+
+
+@app.get("/api/vcenter/perf/diagnose/batch/status", dependencies=[Depends(require_admin)])
+def api_diag_batch_status():
+    import diag_batch
+    return diag_batch.status()
+
+
 @app.get("/api/ai/benchmark/results", dependencies=[Depends(require_admin)])
 def api_ai_benchmark_results(format: str = "json"):
     import ai_benchmark
