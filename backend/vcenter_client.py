@@ -1113,7 +1113,7 @@ def collect_perf_samples(si) -> list:
     ps_ = vmodl.query.PropertyCollector.PropertySpec(
         type=vim.VirtualMachine, all=False,
         pathSet=[
-            "name", "runtime.powerState", "runtime.maxCpuUsage",
+            "name", "runtime.powerState", "runtime.maxCpuUsage", "runtime.host",
             "config.hardware.numCPU", "config.hardware.memoryMB",
             "summary.quickStats.overallCpuUsage", "summary.quickStats.guestMemoryUsage",
         ],
@@ -1132,6 +1132,7 @@ def collect_perf_samples(si) -> list:
         cpu_mhz = props.get("summary.quickStats.overallCpuUsage", 0) or 0
         out.append({
             "_obj":    obj.obj,
+            "host_mor": str(props.get("runtime.host") or ""),
             "name":    name,
             "num_cpu": props.get("config.hardware.numCPU", 0) or 0,
             "mem_mb":  mem_mb,
@@ -1142,6 +1143,49 @@ def collect_perf_samples(si) -> list:
 
 
 _ready_counter_ids: dict = {}   # vCenter instanceUuid -> counter id of cpu.ready.summation
+
+
+def collect_host_live(si) -> dict:
+    """Live load of every ESXi host: {host mor string: {...}} (one light PropertyCollector pass).
+
+    The mor string is str(obj) - the same form as the "host_mor" collect_perf_samples puts on each VM."""
+    content = si.RetrieveContent()
+    pc = content.propertyCollector
+    traversal = [
+        _tspec("f2f",   vim.Folder,          "childEntity", ["f2f", "dc2hf", "cr2h"]),
+        _tspec("dc2hf", vim.Datacenter,      "hostFolder",  ["f2f"]),
+        _tspec("cr2h",  vim.ComputeResource, "host",        []),
+    ]
+    os_ = vmodl.query.PropertyCollector.ObjectSpec(obj=content.rootFolder, skip=True, selectSet=traversal)
+    ps_ = vmodl.query.PropertyCollector.PropertySpec(
+        type=vim.HostSystem, all=False,
+        pathSet=[
+            "name",
+            "summary.hardware.numCpuCores", "summary.hardware.cpuMhz", "summary.hardware.memorySize",
+            "summary.quickStats.overallCpuUsage", "summary.quickStats.overallMemoryUsage",
+            "summary.overallStatus", "runtime.connectionState", "runtime.inMaintenanceMode",
+        ],
+    )
+    objs = _paginate(pc, vmodl.query.PropertyCollector.FilterSpec(objectSet=[os_], propSet=[ps_]), max_objects=500)
+    out = {}
+    for obj in objs:
+        props = {p.name: p.val for p in obj.propSet} if obj.propSet else {}
+        cores = props.get("summary.hardware.numCpuCores", 0) or 0
+        total_mhz = cores * (props.get("summary.hardware.cpuMhz", 0) or 0)
+        cpu_mhz = props.get("summary.quickStats.overallCpuUsage", 0) or 0
+        mem_total_mb = (props.get("summary.hardware.memorySize", 0) or 0) / (1024 ** 2)
+        mem_mb = props.get("summary.quickStats.overallMemoryUsage", 0) or 0
+        out[str(obj.obj)] = {
+            "name":         props.get("name", ""),
+            "cores":        cores,
+            "cpu_pct":      round(cpu_mhz / total_mhz * 100, 1) if total_mhz else 0,
+            "mem_total_gb": round(mem_total_mb / 1024, 1),
+            "mem_pct":      round(mem_mb / mem_total_mb * 100, 1) if mem_total_mb else 0,
+            "status":       str(props.get("summary.overallStatus", "unknown")),
+            "connection":   str(props.get("runtime.connectionState", "unknown")),
+            "maintenance":  bool(props.get("runtime.inMaintenanceMode", False)),
+        }
+    return out
 
 
 def collect_cpu_ready(si, samples: list) -> None:
@@ -1178,6 +1222,103 @@ def collect_cpu_ready(si, samples: list) -> None:
             vals = [v for v in r.value[0].value if v is not None and v >= 0]
             if vals:
                 s["ready_pct"] = round(sum(vals) / len(vals) / (20000.0 * s["num_cpu"]) * 100, 2)
+
+
+_disk_counter_ids: dict = {}   # vCenter instanceUuid -> {"read_ms": id, ...}
+
+_DISK_COUNTERS = {
+    "read_ms":    ("totalReadLatency",  "average"),
+    "write_ms":   ("totalWriteLatency", "average"),
+    "read_iops":  ("numberReadAveraged", "average"),
+    "write_iops": ("numberWriteAveraged", "average"),
+    "read_kbps":  ("read",  "average"),
+    "write_kbps": ("write", "average"),
+}
+
+
+def _find_vm(si, name: str):
+    """VM managed object by exact (case-insensitive) name, or None."""
+    content = si.RetrieveContent()
+    view = content.viewManager.CreateContainerView(content.rootFolder, [vim.VirtualMachine], True)
+    try:
+        pc = content.propertyCollector
+        ts = vmodl.query.PropertyCollector.TraversalSpec(name="v", type=vim.view.ContainerView, path="view", skip=False)
+        os_ = vmodl.query.PropertyCollector.ObjectSpec(obj=view, skip=True, selectSet=[ts])
+        ps_ = vmodl.query.PropertyCollector.PropertySpec(type=vim.VirtualMachine, all=False, pathSet=["name"])
+        want = name.lower()
+        for o in _paginate(pc, vmodl.query.PropertyCollector.FilterSpec(objectSet=[os_], propSet=[ps_])):
+            props = {p.name: p.val for p in o.propSet} if o.propSet else {}
+            if (props.get("name") or "").lower() == want:
+                return o.obj
+    finally:
+        view.Destroy()
+    return None
+
+
+def collect_vm_disks(si, vm_name: str) -> dict:
+    """Live latency/IOPS/throughput per virtual disk of one VM (realtime 20 s samples, last ~5 min).
+
+    Returns {"found": bool, "powered_on": bool, "disks": [{label, instance, datastore, size_gb,
+    read_ms, write_ms, read_ms_max, write_ms_max, read_iops, write_iops, read_mbps, write_mbps}]}.
+    Latency is what the ESXi host sees (guest-visible storage latency), in milliseconds."""
+    vm = _find_vm(si, vm_name)
+    if vm is None:
+        return {"found": False, "powered_on": False, "disks": []}
+    powered = str(vm.runtime.powerState) == "poweredOn"
+    devices = vm.config.hardware.device if vm.config else []
+    ctrl = {}
+    for d in devices:
+        if isinstance(d, vim.vm.device.VirtualSCSIController):
+            ctrl[d.key] = "scsi%d" % d.busNumber
+        elif isinstance(d, vim.vm.device.VirtualAHCIController):
+            ctrl[d.key] = "sata%d" % d.busNumber
+        elif isinstance(d, vim.vm.device.VirtualNVMEController):
+            ctrl[d.key] = "nvme%d" % d.busNumber
+        elif isinstance(d, vim.vm.device.VirtualIDEController):
+            ctrl[d.key] = "ide%d" % d.busNumber
+    disks = {}
+    for d in devices:
+        if not isinstance(d, vim.vm.device.VirtualDisk):
+            continue
+        inst = "%s:%d" % (ctrl.get(d.controllerKey, "scsi0"), d.unitNumber or 0)
+        fname = getattr(d.backing, "fileName", "") or ""
+        ds = fname[1:fname.index("]")] if fname.startswith("[") and "]" in fname else ""
+        disks[inst] = {
+            "label": d.deviceInfo.label if d.deviceInfo else inst, "instance": inst, "datastore": ds,
+            "size_gb": round((d.capacityInKB or 0) / 1048576, 1),
+            "read_ms": None, "write_ms": None, "read_ms_max": None, "write_ms_max": None,
+            "read_iops": None, "write_iops": None, "read_mbps": None, "write_mbps": None,
+        }
+    if powered and disks:
+        content = si.RetrieveContent()
+        pm = content.perfManager
+        key = content.about.instanceUuid
+        ids = _disk_counter_ids.get(key)
+        if ids is None:
+            by_name = {(c.groupInfo.key, c.nameInfo.key, str(c.rollupType)): c.key for c in pm.perfCounter}
+            ids = {k: by_name.get(("virtualDisk", n, r)) for k, (n, r) in _DISK_COUNTERS.items()}
+            _disk_counter_ids[key] = ids
+        want = {cid: k for k, cid in ids.items() if cid is not None}
+        if want:
+            spec = vim.PerformanceManager.QuerySpec(
+                entity=vm, intervalId=20, maxSample=15,
+                metricId=[vim.PerformanceManager.MetricId(counterId=cid, instance="*") for cid in want])
+            res = pm.QueryPerf(querySpec=[spec])
+            for r in (res or []):
+                for series in (r.value or []):
+                    k = want.get(series.id.counterId)
+                    row = disks.get(series.id.instance)
+                    vals = [v for v in (series.value or []) if v is not None and v >= 0]
+                    if not k or row is None or not vals:
+                        continue
+                    avg = sum(vals) / len(vals)
+                    if k in ("read_ms", "write_ms"):
+                        row[k], row[k + "_max"] = round(avg, 1), round(max(vals), 1)
+                    elif k in ("read_iops", "write_iops"):
+                        row[k] = round(avg, 1)
+                    else:
+                        row[k.replace("kbps", "mbps")] = round(avg / 1024, 2)
+    return {"found": True, "powered_on": powered, "disks": sorted(disks.values(), key=lambda x: x["instance"])}
 
 
 def open_session(host: str, username: str, password: str):

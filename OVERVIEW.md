@@ -175,7 +175,7 @@ DsahBoard-UCS-Test/
 | Infinidat | `/api/ibox/{id}` | `ping`, `summary`, `volumes`, `snapshots`, `replicas`, `replicas/detailed`, `top-volumes`, `performance`, `hardware` |
 | vCenter | `/api/vcenter/{env}` | `ping`, `summary` (cache 180s) |
 | vCenter Events | `/api/vcenter/events` | `poll` (admin), `export` |
-| vCenter Performance | `/api/vcenter/perf` | `?range=24h\|7d\|30d\|90d\|180d&env=` (סיכום לכל VM כולל CPU Ready), `perf/vm` (סדרה לגרף), `perf/backups` (זמני גיבוי של VM מ-Veeam B&R לסימון בגרף), `perf/rightsizing`, `perf/status` |
+| vCenter Performance | `/api/vcenter/perf` | `?range=24h\|7d\|30d\|90d\|180d&env=` (סיכום לכל VM כולל CPU Ready), `perf/vm` (סדרה לגרף), `perf/backups` (זמני גיבוי של VM מ-Veeam B&R לסימון בגרף), `perf/hosts` (ESXi של כל VM + עומס רגעי, חי), `perf/disks` (לייטנסי/IOPS לכל דיסק של VM, חי מ-vCenter), `perf/rightsizing`, `perf/status` |
 | vCenter History | `/api/vcenter/history` | `snapshot` (POST, admin), `snapshots`, `snapshot/{id}`, DELETE `snapshot/{id}` |
 | Veeam EM | `/api/backup/em` | `ping`, `summary` (session auth, cache 5min) |
 | Veeam B&R | `/api/backup/{pt\|fattal\|tc\|lifesaver}` | `ping`, `summary` (OAuth2, cache 5min) |

@@ -524,6 +524,31 @@ Get-Service     UcsDashboard
   סנאפשוטי Infinidat לא נכללים.
 - **אימות:** לא נבדק מול נתוני Veeam ל-VM עם job גיבוי רגיל וטווחי session/task — לוודא אחרי deploy.
 
+### ESXi ועומס רגעי בדף הביצועים (`vcenter_perf.html`)
+- **מטרה:** לדעת על איזה ESXi יושב כל VM ואם ה-host עמוס — מידע רגעי למקרה של איטיות בשרת שאין לו בעיית משאבים. **לא נשמר ולא מופיע בגרף.**
+- **איסוף חי:** `collect_perf_samples` מוסיף `runtime.host` לכל VM; `collect_host_live(si)` ב-[vcenter_client.py](backend/vcenter_client.py)
+  שולף CPU/RAM/ליבות/מצב חיבור/Maintenance לכל ESXi (מעבר PropertyCollector קל אחד). `_update_live` ב-[perf_collector.py](backend/perf_collector.py)
+  רץ בכל דגימה (דקה) ושומר ב-`perf_collector.live` (זיכרון בלבד) לכל env: `hosts` (עומס + פסק דין), `vm_host` (VM → host).
+- **פסק דין לכל host** (`_host_verdict`): 🟢 תקין / 🟠 בינוני / 🔴 גבוה / ⚫ לא זמין. ספים: CPU ≥75/90%, RAM ≥85/95%,
+  CPU Ready ממוצע של ה-VMs על ה-host ≥3/5% לכל vCPU, יחס vCPU:ליבה >4:1 (אזהרה). ה-reasons מוצגים בכרטיס וב-tooltip.
+- **API:** `GET /api/vcenter/perf/hosts` → `{envs: {env: {age_s, hosts, vm_host}}}`.
+- **UI:** צ'קבוקס `🖥 הצג ESXi (עומס רגעי)` (localStorage `perf-esxi`): עמודת ESXi בטבלה (נקודת צבע + שם host + tooltip),
+  וכרטיס עומס מעל הגרף בפתיחת שרת (CPU, RAM, Ready, מספר VMs, vCPU:ליבה, 3 ה-VMs העמוסים ביותר, גיל הנתון). נוספת עמודת ESXi ביצוא Excel.
+- **מגבלות:** אין נתון עד ~דקה אחרי הפעלת השירות; לא מוצג cluster; Ready ברמת host הוא ממוצע ה-VMs ולא counter של ה-host עצמו;
+  RAM ה-host הוא `overallMemoryUsage` (כולל cache) ולכן הסף גבוה. **לא נבדק מול vCenter אמיתי בזמן הכתיבה.**
+- **תיקון בדרך:** ב-`drawChart` ה-regex של טווח הזמן (`/^(\d+)([hd])$/`) איבד backslash, כך שימי הגיבוי תמיד היו 7; תוקן. כנ"ל ב-`exportExcel`.
+
+### לייטנסי דיסקים ל-VM (`vcenter_perf.html`) — חלק א'
+- **מטרה:** בפתיחת שרת — לייטנסי/IOPS/קצב לכל דיסק וירטואלי, כדי לברר איטיות שאינה CPU/RAM. חי, לא נשמר, לא בגרף.
+- **Endpoint:** `GET /api/vcenter/perf/disks?env=&name=` ב-[app.py](backend/app.py) — פותח session קצר ל-vCenter של ה-env, cache של 30 שנ'.
+  `collect_vm_disks` ב-[vcenter_client.py](backend/vcenter_client.py): מוצא את ה-VM לפי שם, ממפה דיסק↔instance (`scsi0:1`/`sata`/`nvme`/`ide`)
+  ושואל `virtualDisk.totalRead/WriteLatency`, `numberRead/WriteAveraged`, `read/write` (realtime 20 שנ', 15 דגימות ≈ 5 דקות): ממוצע + שיא ללייטנסי.
+- **ספים:** אזהרה ≥20ms, קריטי ≥30ms (`_DISK_LAT_WARN/_CRIT`); אזהרה גם אם השיא ב-5 דק' ≥30ms.
+- **UI:** צ'קבוקס `💽 הצג לייטנסי דיסקים` (localStorage `perf-disk`); טבלת דיסקים (Datastore, גודל, Read/Write ms, IOPS, MB/s) מעל הגרף בפתיחת שרת.
+- **מגבלות:** שרת כבוי = אין נתון; הלייטנסי הוא כפי שה-ESXi רואה (כולל תור ב-host), לא ערך שהאחסון מדווח; אין היסטוריה.
+- **חלק ב' (לא נעשה):** לייטנסי ברמת Volume באינפינידט — דורש מיפוי datastore→LUN (`naa`)→serial של ה-volume ו-endpoint מדדי volume ב-iBox (לא נבדק אם קיים ב-v7.3/v8.1).
+- **לא נבדק מול vCenter אמיתי** בזמן הכתיבה.
+
 ### Deploy
 - אחרי שינוי backend צריך `Restart-Service UcsDashboard` כמנהל; אחרי ההפעלה מחדש יש להתחבר מחדש לדשבורד.
 
@@ -1192,6 +1217,7 @@ Get-Service     UcsDashboard
 - [x] ~~`?refresh=true` בדפי vCenter בלי admin-gate~~ — **תוקן 4.8**
 
 ### שוטף
+- [ ] **בדיקת תצוגת ESXi מול vCenter אמיתי** — עמודה/כרטיס, ספי העומס, ופורמט ה-host ב-`runtime.host` (גרסה 4.11)
 - [ ] **בדיקת סימון גיבויים מול VM עם גיבוי רגיל** — לוודא טווחי זמן (task sessions) ואת סיווג הרפליקציה לפי שם job (גרסה 4.11)
 - [ ] **ניקוי הריפו** — קבצי `.clean*` / `.fixed` / `.patched` / `.bak` ב-`backend/` ו-`frontend/`
 - [ ] **Port Group VLAN ל-standard vSwitch** — עדיין `vlan_id=None` ל-std vSwitch portgroups (אין מידע ב-API ללא query נוסף ל-HostVirtualSwitch)

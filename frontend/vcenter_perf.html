@@ -112,6 +112,8 @@
       </select>
     </label>
     <label title="מוסיף עמודות CPU Ready (פיק וממוצע, לכל vCPU) ואזהרות. תקין &lt; 5%, אזהרה 5–10%, קריטי ≥ 10%"><input type="checkbox" id="f-ready" onchange="saveReady();render()" /> &#x23F1; הצג CPU Ready</label>
+    <label title="מוסיף עמודה עם ה-ESXi שהשרת יושב עליו, וכרטיס עומס רגעי של ה-ESXi בפתיחת השרת (נתון חי, לא נשמר ולא מופיע בגרף)"><input type="checkbox" id="f-esxi" onchange="saveEsxi();loadHosts().then(render)" /> &#x1F5A5; הצג ESXi (עומס רגעי)</label>
+    <label title="בפתיחת שרת מציג לייטנסי / IOPS / קצב של כל דיסק שלו (נקרא חי מ-vCenter, 5 דקות אחרונות; לא נשמר ולא בגרף)"><input type="checkbox" id="f-disk" onchange="saveDisk();render()" /> &#x1F4BD; הצג לייטנסי דיסקים</label>
     <label title="מסמן בגרף של כל שרת את זמני הגיבוי של Veeam (מוסיף קריאה לשרתי הגיבוי בפתיחת גרף)"><input type="checkbox" id="f-bk" onchange="saveBk();render()" /> &#x1F4BE; הצג זמני גיבוי בגרף</label>
     <label title="מסמן נקודות של jobs מסוג רפליקציה (Replica / סנאפשוט, למשל FT-Rep-1) בצבע נפרד. עובד גם בלי 'הצג זמני גיבוי'"><input type="checkbox" id="f-bksnap" onchange="saveBk();render()" /> הצג רפליקציה / סנאפשוט</label>
     <label><input type="checkbox" id="f-over" onchange="render()" /> הצג רק שרתים שעברו את הסף</label>
@@ -168,6 +170,84 @@ function bkOn() { return document.getElementById('f-bk').checked; }
 function bkSnapOn() { return document.getElementById('f-bksnap').checked; }
 function loadBk() { try { document.getElementById('f-bk').checked = localStorage.getItem('perf-bk') === '1'; document.getElementById('f-bksnap').checked = localStorage.getItem('perf-bksnap') === '1'; } catch (x) {} }
 function saveBk() { try { localStorage.setItem('perf-bk', bkOn() ? '1' : '0'); localStorage.setItem('perf-bksnap', bkSnapOn() ? '1' : '0'); } catch (x) {} }
+// ── ESXi: where each VM runs + live load of that host (not stored, not in the chart) ──
+var _hosts = {};   // env -> {age_s, hosts: {name: {...}}, vm_host: {vm: host}}
+var HL = { ok: '🟢', warn: '🟠', crit: '🔴', down: '⚫' };
+var HL_TXT = { ok: 'תקין', warn: 'עומס בינוני', crit: 'עומס גבוה', down: 'לא זמין' };
+function esxiOn() { return document.getElementById('f-esxi').checked; }
+function loadEsxi() { try { document.getElementById('f-esxi').checked = localStorage.getItem('perf-esxi') === '1'; } catch (x) {} }
+function saveEsxi() { try { localStorage.setItem('perf-esxi', esxiOn() ? '1' : '0'); } catch (x) {} }
+async function loadHosts() {
+  if (!esxiOn()) return;
+  try {
+    var r = await fetch('/api/vcenter/perf/hosts', { credentials: 'include' });
+    _hosts = r.ok ? ((await r.json()).envs || {}) : {};
+  } catch (x) { _hosts = {}; }
+}
+function hostOf(v) {
+  var d = _hosts[v.environment];
+  if (!d) return null;
+  var n = d.vm_host[v.vm_name];
+  return n ? d.hosts[n] : null;
+}
+function hostTitle(h) {
+  return h.name + ' · ' + HL_TXT[h.level] + ' · CPU ' + h.cpu_pct + '% · RAM ' + h.mem_pct + '%' + (h.reasons.length ? ' · ' + h.reasons.join(', ') : '');
+}
+function esxiCell(v) {
+  var h = hostOf(v);
+  if (!h) return '<span class="muted" title="אין נתון חי (השרת כבוי או שהאיסוף עוד לא רץ)">—</span>';
+  return '<span title="' + e(hostTitle(h)) + '">' + HL[h.level] + ' ' + e(h.name.split('.')[0]) + '</span>';
+}
+function esxiCard(v) {
+  if (!esxiOn()) return '';
+  var h = hostOf(v);
+  if (!h) return '<div class="muted" style="margin-bottom:.4rem">🖥 ESXi: אין נתון חי לשרת הזה (כבוי, או שהאיסוף עוד לא רץ).</div>';
+  var age = (_hosts[v.environment] || {}).age_s;
+  var rdy = h.ready_avg == null ? '—' : h.ready_avg + '% (מקס׳ ' + h.ready_max + '%)';
+  var top = (h.top_vms || []).map(function (t) { return e(t.name) + ' ' + t.cpu_pct + '%'; }).join(' · ');
+  return '<div style="margin-bottom:.5rem;padding:.45rem .7rem;border:1px solid var(--border,#30363d);border-radius:8px;font-size:.8rem;line-height:1.6">' +
+    '<b>🖥 ESXi: ' + e(h.name) + '</b> &nbsp; ' + HL[h.level] + ' ' + HL_TXT[h.level] +
+    (h.reasons.length ? ' — ' + e(h.reasons.join(' · ')) : '') + '<br>' +
+    'CPU ' + h.cpu_pct + '% · RAM ' + h.mem_pct + '% (' + h.mem_total_gb + ' GB) · CPU Ready ממוצע ' + rdy +
+    ' · ' + h.vms + ' VMs · ' + h.vcpus + ' vCPU על ' + h.cores + ' ליבות (' + h.vcpu_ratio + ':1)<br>' +
+    (top ? '<span class="muted">הכי עמוסים על ה-ESXi: ' + top + '</span> · ' : '') +
+    '<span class="muted">נתון רגעי' + (age != null ? ', לפני ' + age + ' שנ׳' : '') + '</span></div>';
+}
+// ── Live per-disk latency of one VM (read from vCenter on demand; not stored, not in the chart) ──
+function diskOn() { return document.getElementById('f-disk').checked; }
+function loadDisk() { try { document.getElementById('f-disk').checked = localStorage.getItem('perf-disk') === '1'; } catch (x) {} }
+function saveDisk() { try { localStorage.setItem('perf-disk', diskOn() ? '1' : '0'); } catch (x) {} }
+function diskBox() { return diskOn() ? '<div class="disk-box" style="margin-bottom:.5rem"><span class="muted">💽 טוען נתוני דיסקים…</span></div>' : ''; }
+function latCell(avg, max, res) {
+  if (avg == null) return '<span class="muted">—</span>';
+  var cls = avg >= res.crit_ms ? 'hot' : (avg >= res.warn_ms || max >= res.crit_ms ? 'warm' : 'ok');
+  return '<span class="pct ' + cls + '" title="שיא ב-5 דקות: ' + max + ' ms">' + avg + ' ms</span>';
+}
+async function fillDisks(cell, env, name) {
+  var box = cell.querySelector('.disk-box');
+  if (!box) return;
+  try {
+    var r = await fetch('/api/vcenter/perf/disks?env=' + encodeURIComponent(env) + '&name=' + encodeURIComponent(name), { credentials: 'include' });
+    if (!r.ok) throw new Error('http ' + r.status);
+    var j = await r.json();
+    if (!j.found) { box.innerHTML = '<span class="muted">💽 השרת לא נמצא ב-vCenter.</span>'; return; }
+    if (!j.powered_on) { box.innerHTML = '<span class="muted">💽 השרת כבוי — אין נתוני דיסק חיים.</span>'; return; }
+    if (!j.disks.length) { box.innerHTML = '<span class="muted">💽 אין דיסקים וירטואליים לשרת.</span>'; return; }
+    var HLd = { ok: '🟢', warn: '🟠', crit: '🔴' };
+    var rows = j.disks.map(function (d) {
+      var iops = (d.read_iops == null && d.write_iops == null) ? '—' : (d.read_iops || 0) + ' / ' + (d.write_iops || 0);
+      var mbps = (d.read_mbps == null && d.write_mbps == null) ? '—' : (d.read_mbps || 0) + ' / ' + (d.write_mbps || 0);
+      return '<tr><td>' + HLd[d.level] + ' ' + e(d.label) + ' <span class="muted">(' + e(d.instance) + ')</span></td>' +
+        '<td>' + e(d.datastore || '—') + '</td><td class="center">' + d.size_gb + ' GB</td>' +
+        '<td class="center">' + latCell(d.read_ms, d.read_ms_max, j) + '</td>' +
+        '<td class="center">' + latCell(d.write_ms, d.write_ms_max, j) + '</td>' +
+        '<td class="center">' + iops + '</td><td class="center">' + mbps + '</td></tr>';
+    }).join('');
+    box.innerHTML = '<div style="padding:.45rem .7rem;border:1px solid var(--border,#30363d);border-radius:8px;font-size:.8rem">' +
+      '<b>💽 דיסקים (חי, ממוצע 5 דקות אחרונות)</b> <span class="muted">· אזהרה ≥ ' + j.warn_ms + ' ms · קריטי ≥ ' + j.crit_ms + ' ms · לייטנסי כפי שה-ESXi רואה אותו</span>' +
+      '<table style="width:100%;margin-top:.3rem;border-collapse:collapse"><thead><tr class="muted"><th style="text-align:right">דיסק</th><th style="text-align:right">Datastore</th><th class="center">גודל</th><th class="center">Read</th><th class="center">Write</th><th class="center">IOPS (R / W)</th><th class="center">MB/s (R / W)</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  } catch (x) { box.innerHTML = '<span class="muted">💽 לא ניתן לטעון נתוני דיסק (שגיאה / vCenter לא ענה).</span>'; }
+}
 function loadReady() { try { document.getElementById('f-ready').checked = localStorage.getItem('perf-ready') === '1'; } catch (x) {} }
 function saveReady() { try { localStorage.setItem('perf-ready', readyOn() ? '1' : '0'); } catch (x) {} }
 function rdyCls(p) { return p >= RDY_CRIT ? 'crit' : (p >= RDY_WARN ? 'warn' : 'ok'); }
@@ -237,6 +317,7 @@ async function load() {
     _rows.forEach(annotate);
     _stats = perf.stats || {};
     _customerMap = cm || {};
+    await loadHosts();
   } catch (x) {
     document.getElementById('tbody').innerHTML = '<tr class="empty-row"><td colspan="11">שגיאה בטעינת הנתונים</td></tr>';
     return;
@@ -333,6 +414,7 @@ function vmRow(v, indent) {
   var html = '<tr class="vm-sub-row" data-k="' + e(k) + '" onclick="toggleChart(this.dataset.k)">' +
     '<td class="name-cell" style="padding-right:' + (indent ? '2rem' : '0.7rem') + '" title="' + e(v.vm_name) + '">' + e(v.vm_name) + '</td>' +
     '<td><span class="env-badge ' + e(v.environment) + '">' + e(v.environment) + '</span></td>' +
+    (esxiOn() ? '<td class="center">' + esxiCell(v) + '</td>' : '') +
     '<td class="center">' + (v.num_cpu || '—') + ' / ' + (v.mem_gb != null ? v.mem_gb : '—') + '</td>' +
     '<td class="center">' + pctHtml(v.max_cpu_pct, tc) + '<span class="when">' + fmtWhen(v.max_cpu_ts) + '</span></td>' +
     '<td class="center">' + pctHtml(v.avg_cpu_pct, tc) + '</td>' +
@@ -341,7 +423,7 @@ function vmRow(v, indent) {
     '<td class="center">' + lvBadge(v) + '</td>' +
     (readyOn() ? '<td class="center">' + readyPeakHtml(v) + '</td><td class="center">' + readyAvgHtml(v) + '</td>' : '') +
     '<td colspan="3"></td></tr>';
-  if (_chartOpen.has(k)) html += '<tr class="chart-row" id="chart-' + btoa(unescape(encodeURIComponent(k))).replace(/=/g, '') + '"><td colspan="11">⏳ טוען גרף...</td></tr>';
+  if (_chartOpen.has(k)) html += '<tr class="chart-row" id="chart-' + btoa(unescape(encodeURIComponent(k))).replace(/=/g, '') + '"><td colspan="12">⏳ טוען גרף...</td></tr>';
   return html;
 }
 
@@ -387,14 +469,14 @@ function render() {
   }
 
   if (flat) {
-    thead.innerHTML = '<tr>' + th('שם VM', 'name') + '<th>סביבה</th><th class="center">vCPU / RAM (GB)</th>' +
+    thead.innerHTML = '<tr>' + th('שם VM', 'name') + '<th>סביבה</th>' + (esxiOn() ? '<th class="center">ESXi</th>' : '') + '<th class="center">vCPU / RAM (GB)</th>' +
       th('פיק CPU', 'cpu', 'center') + th('ממוצע CPU', 'avgcpu', 'center') + th('פיק RAM', 'ram', 'center') + th('ממוצע RAM', 'avgram', 'center') +
       th('מד עומס', 'load', 'center') + readyHeads() + '<th colspan="3">לקוח</th></tr>';
     tbody.innerHTML = vms.slice().sort(cmp).map(function (v) {
       return vmRow(v, false).replace('<td colspan="3"></td>', '<td colspan="3" class="muted">' + e(_customerMap[v.sap_number] || v.sap_number || '—') + '</td>');
     }).join('');
   } else {
-    thead.innerHTML = '<tr>' + th('לקוח / שרת', 'name') + '<th>סביבה</th><th class="center">vCPU / RAM (GB)</th>' +
+    thead.innerHTML = '<tr>' + th('לקוח / שרת', 'name') + '<th>סביבה</th>' + (esxiOn() ? '<th class="center">ESXi</th>' : '') + '<th class="center">vCPU / RAM (GB)</th>' +
       th('פיק CPU', 'cpu', 'center') + th('ממוצע CPU', 'avgcpu', 'center') + th('פיק RAM', 'ram', 'center') + th('ממוצע RAM', 'avgram', 'center') +
       th('מד עומס', 'load', 'center') + readyHeads() + th('שרתים', 'vms', 'center') + th('עברו CPU', 'overCpu', 'center') + th('עברו RAM', 'overRam', 'center') + '</tr>';
     var html = '';
@@ -403,7 +485,7 @@ function render() {
       html += '<tr class="cust-row' + (open ? ' expanded' : '') + '" onclick="toggleCustomer(\'' + g.key.replace(/'/g, "\\'") + '\')">' +
         '<td class="name-cell">' + e(g.name) + (g.sap ? ' <span class="muted" style="font-size:0.7rem">#' + e(g.sap) + '</span>' : '') +
         ' <button class="row-export-btn" onclick="exportExcel(event,this.dataset.k)" data-k="' + e(g.key) + '">&#x1F4E5; Excel</button></td>' +
-        '<td></td><td></td>' +
+        '<td></td>' + (esxiOn() ? '<td></td>' : '') + '<td></td>' +
         '<td class="center">' + pctHtml(g.cpu, tc) + '</td><td></td>' +
         '<td class="center">' + pctHtml(g.ram, tr) + '</td><td></td>' +
         '<td class="center">' + (g.lv3 ? '<span class="lv lv-3">🔴 ' + g.lv3 + '</span> ' : '') + (g.lv2 ? '<span class="lv lv-2">🟠 ' + g.lv2 + '</span>' : (g.lv3 ? '' : '<span class="muted">—</span>')) + '</td>' +
@@ -428,7 +510,7 @@ async function drawChart(k) {
   var i = k.indexOf('|'), env = k.slice(0, i), name = k.slice(i + 1);
   var cell = row.firstElementChild;
   try {
-    var rm = /^(d+)([hd])$/.exec(_range), bdays = rm ? (rm[2] === 'h' ? 1 : +rm[1]) : 7;
+    var rm = /^(\d+)([hd])$/.exec(_range), bdays = rm ? (rm[2] === 'h' ? 1 : +rm[1]) : 7;
     var bkCtl = new AbortController(), bkTimer = setTimeout(function () { bkCtl.abort(); }, 45000);
     var bkP = !(bkOn() || bkSnapOn()) ? Promise.resolve({ points: [] }) : fetch('/api/vcenter/perf/backups?name=' + encodeURIComponent(name) + '&days=' + bdays, { credentials: 'include', signal: bkCtl.signal })
       .then(function (x) { return x.ok ? x.json() : { points: [], failed: true }; }).catch(function () { return { points: [], failed: true }; })
@@ -437,7 +519,7 @@ async function drawChart(k) {
     var j = await r.json();
     var bkRes = await bkP, bk = bkRes.points || [];
     var d = j.data || [];
-    if (d.length < 2) { cell.innerHTML = '<span class="muted">אין מספיק נתונים לגרף עדיין.</span>'; return; }
+    if (d.length < 2) { cell.innerHTML = esxiCard({ environment: env, vm_name: name }) + diskBox() + '<span class="muted">אין מספיק נתונים לגרף עדיין.</span>'; fillDisks(cell, env, name); return; }
     var W = 900, H = 170, pl = 34, pb = 20, pt = 8, pr = 8;
     var n = d.length;
     function X(i) { return pl + (W - pl - pr) * (n === 1 ? 0 : i / (n - 1)); }
@@ -484,9 +566,10 @@ async function drawChart(k) {
       else if (!bkOn() && snN === 0) bkMsg = '<span class="muted">⚠ לא נמצאו נקודות רפליקציה / סנאפשוט לשרת בטווח הזה</span>';
       else if (errs.length) bkMsg = '<span class="muted">⚠ שרתי גיבוי שלא ענו: ' + e(errs.join(', ')) + '</span>';
     }
-    cell.innerHTML = '<div class="legend"><span><i style="background:#58a6ff"></i>פיק CPU %</span><span><i style="background:#d2a8ff"></i>פיק RAM %</span>' + (bkOn() ? '<span><i style="background:#f0883e"></i>גיבוי (' + bkN + ')</span>' : '') + (showSnap ? '<span><i style="background:#3fb9a8"></i>רפליקציה/סנאפשוט (' + snN + ')</span>' : '') + '<span>' +
+    cell.innerHTML = esxiCard({ environment: env, vm_name: name }) + diskBox() + '<div class="legend"><span><i style="background:#58a6ff"></i>פיק CPU %</span><span><i style="background:#d2a8ff"></i>פיק RAM %</span>' + (bkOn() ? '<span><i style="background:#f0883e"></i>גיבוי (' + bkN + ')</span>' : '') + (showSnap ? '<span><i style="background:#3fb9a8"></i>רפליקציה/סנאפשוט (' + snN + ')</span>' : '') + '<span>' +
       (j.table === 'vm_perf_hourly' ? 'מקסימום לכל שעה' : 'מקסימום לכל יום') + ' · ' + e(name) + '</span>' + bkMsg + '</div>' +
       '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-width:1100px;height:auto;direction:ltr">' + grid + bkSvg + thr + line('max_cpu_pct', '#58a6ff') + line('max_mem_pct', '#d2a8ff') + tl + '</svg>';
+    fillDisks(cell, env, name);
   } catch (x) { cell.innerHTML = '<span class="muted">שגיאה בטעינת הגרף.</span>'; }
 }
 
@@ -497,6 +580,7 @@ async function exportExcel(ev, onlyKey) {
   var ws = wb.addWorksheet('ביצועים', { views: [{ rightToLeft: true, state: 'frozen', ySplit: 1 }] });
   var cols = ['לקוח', 'פריוריטי #', 'שם VM', 'סביבה', 'vCPU', 'RAM (GB)', 'פיק CPU %', 'זמן פיק CPU', 'ממוצע CPU %', 'פיק RAM %', 'זמן פיק RAM', 'ממוצע RAM %', 'דגימות', 'מד עומס', '% זמן CPU ≥85', '% זמן CPU ≥70', '% זמן RAM ≥85', '% זמן RAM ≥70', 'פירוט'];
   if (readyOn()) cols.push('פיק CPU Ready % (לכל vCPU)', 'ממוצע CPU Ready %', 'דקות Ready ≥5%', 'דקות Ready ≥10%');
+  if (esxiOn()) cols.push('ESXi', 'עומס ESXi');
   ws.columns = cols.map(function (c) { return { header: c, width: Math.max(c.length + 4, 12) }; });
   ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
   ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F6FEB' } };
@@ -504,9 +588,9 @@ async function exportExcel(ev, onlyKey) {
   vms.forEach(function (v) {
     var row = ws.addRow([_customerMap[v.sap_number] || '', v.sap_number || '', v.vm_name, v.environment, v.num_cpu, v.mem_gb,
       r1(v.max_cpu_pct), v.max_cpu_ts || '', r1(v.avg_cpu_pct), r1(v.max_mem_pct), v.max_mem_ts || '', r1(v.avg_mem_pct), v.samples,
-      LV_LABEL[v._lv].replace(/^S+s/, ''),
+      LV_LABEL[v._lv].replace(/^\S+\s/, ''),
       r1((v.cpu_n_high || 0) / (v.samples || 1) * 100), r1((v.cpu_n_mid || 0) / (v.samples || 1) * 100),
-      r1((v.mem_n_high || 0) / (v.samples || 1) * 100), r1((v.mem_n_mid || 0) / (v.samples || 1) * 100), v._why].concat(readyOn() ? [r1(v.ready_max_pct), r1(v.ready_avg_pct), v.ready_n_warn || 0, v.ready_n_crit || 0] : []));
+      r1((v.mem_n_high || 0) / (v.samples || 1) * 100), r1((v.mem_n_mid || 0) / (v.samples || 1) * 100), v._why].concat(readyOn() ? [r1(v.ready_max_pct), r1(v.ready_avg_pct), v.ready_n_warn || 0, v.ready_n_crit || 0] : []).concat(esxiOn() ? (function () { var hh = hostOf(v); return hh ? [hh.name, HL_TXT[hh.level] + ' (CPU ' + hh.cpu_pct + '% · RAM ' + hh.mem_pct + '%)'] : ['', '']; })() : []));
     if (readyOn() && v.ready_max_pct >= RDY_WARN) row.getCell(20).font = { bold: true, color: { argb: v.ready_max_pct >= RDY_CRIT ? 'FFD1242F' : 'FFBF8700' } };
     if (v.max_cpu_pct >= tc) row.getCell(7).font = { bold: true, color: { argb: 'FFD1242F' } };
     if (v.max_mem_pct >= tr) row.getCell(10).font = { bold: true, color: { argb: 'FFD1242F' } };
@@ -522,6 +606,8 @@ async function exportExcel(ev, onlyKey) {
 loadThresholds();
 loadReady();
 loadBk();
+loadEsxi();
+loadDisk();
 load();
 </script>
 </body>

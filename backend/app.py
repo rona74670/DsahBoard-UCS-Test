@@ -1444,6 +1444,56 @@ def api_vcenter_perf_backups(name: str, days: int = 7, debug: bool = False):
     return res
 
 
+@app.get("/api/vcenter/perf/hosts")
+def api_vcenter_perf_hosts():
+    """Live (refreshed every minute, not stored): which ESXi each VM runs on and how loaded that host is."""
+    import time as _t
+    now = _t.time()
+    envs = {}
+    for env, d in list(perf_collector.live.items()):
+        envs[env] = {"age_s": int(now - d["ts"]), "hosts": d["hosts"], "vm_host": d["vm_host"]}
+    return {"envs": envs}
+
+
+_disk_cache: dict = {}   # (env, vm) -> (ts, result)
+_DISK_LAT_WARN, _DISK_LAT_CRIT = 20, 30   # ms (VMware guidance: sustained >20 ms is slow, >30 ms is bad)
+
+
+@app.get("/api/vcenter/perf/disks")
+def api_vcenter_perf_disks(env: str, name: str):
+    """Live per-virtual-disk latency / IOPS / throughput of one VM (read straight from vCenter, cached 30 s)."""
+    import time as _t
+    from vcenter_client import collect_vm_disks, open_session
+    from pyVim.connect import Disconnect
+    ck = (env, name.lower())
+    hit = _disk_cache.get(ck)
+    if hit and _t.time() - hit[0] < 30:
+        return hit[1]
+    cfg = next((fn for e_, fn in _VC_ENVS_FOR_EVENTS if e_ == env), None)
+    if cfg is None:
+        raise HTTPException(status_code=404, detail="Unknown environment")
+    host, user, pwd = cfg()
+    si = None
+    try:
+        si = open_session(host, user, pwd)
+        res = collect_vm_disks(si, name)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail="vCenter communication error")
+    finally:
+        if si is not None:
+            try:
+                Disconnect(si)
+            except Exception:
+                pass
+    for d in res["disks"]:
+        worst = max(d["read_ms_max"] or 0, d["write_ms_max"] or 0)
+        avg = max(d["read_ms"] or 0, d["write_ms"] or 0)
+        d["level"] = "crit" if avg >= _DISK_LAT_CRIT else ("warn" if avg >= _DISK_LAT_WARN or worst >= _DISK_LAT_CRIT else "ok")
+    res["warn_ms"], res["crit_ms"] = _DISK_LAT_WARN, _DISK_LAT_CRIT
+    _disk_cache[ck] = (_t.time(), res)
+    return res
+
+
 @app.get("/api/vcenter/perf/rightsizing")
 def api_vcenter_perf_rightsizing(env: str | None = None, days: int = 30, min_days: int = 14,
                                  cpu_target: float = 70, mem_target: float = 80):

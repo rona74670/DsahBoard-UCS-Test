@@ -17,7 +17,7 @@ from datetime import datetime
 from pyVim.connect import Disconnect
 
 import perf_store
-from vcenter_client import collect_cpu_ready, collect_perf_samples, open_session
+from vcenter_client import collect_cpu_ready, collect_host_live, collect_perf_samples, open_session
 
 SAMPLE_INTERVAL = 60      # seconds between samples
 FLUSH_INTERVAL = 180      # seconds between DB flushes (<= this many seconds lost on a hard crash)
@@ -31,6 +31,75 @@ _lock = threading.Lock()
 _acc: dict = {}
 _sessions: dict = {}      # env -> ServiceInstance
 status: dict = {}         # env -> {"last_ok": epoch, "last_error": str, "vms": int}
+# Live (not stored) view of where each VM runs and how loaded that ESXi is, refreshed every sample:
+# env -> {"ts": epoch, "hosts": {host name: {...}}, "vm_host": {vm name: host name}}
+live: dict = {}
+
+# ESXi load thresholds (CPU/RAM = host utilisation %, ready = per-vCPU % averaged over the host's VMs)
+HOST_CPU_WARN, HOST_CPU_CRIT = 75, 90
+HOST_MEM_WARN, HOST_MEM_CRIT = 85, 95
+HOST_READY_WARN, HOST_READY_CRIT = 3, 5
+HOST_RATIO_WARN = 4       # vCPU : physical core
+
+
+def _host_verdict(h: dict) -> None:
+    """Adds "level" (ok|warn|crit|down) and "reasons" to a host dict."""
+    reasons, level = [], [0]
+    if h["connection"] != "connected":
+        h["level"], h["reasons"] = "down", ["ESXi לא מחובר (" + h["connection"] + ")"]
+        return
+
+    def bump(lv, text):
+        level[0] = max(level[0], lv)
+        reasons.append(text)
+
+    if h["cpu_pct"] >= HOST_CPU_CRIT:
+        bump(2, "CPU של ה-ESXi " + str(h["cpu_pct"]) + "%")
+    elif h["cpu_pct"] >= HOST_CPU_WARN:
+        bump(1, "CPU של ה-ESXi " + str(h["cpu_pct"]) + "%")
+    if h["mem_pct"] >= HOST_MEM_CRIT:
+        bump(2, "RAM של ה-ESXi " + str(h["mem_pct"]) + "%")
+    elif h["mem_pct"] >= HOST_MEM_WARN:
+        bump(1, "RAM של ה-ESXi " + str(h["mem_pct"]) + "%")
+    if h["ready_avg"] is not None:
+        if h["ready_avg"] >= HOST_READY_CRIT:
+            bump(2, "CPU Ready ממוצע " + str(h["ready_avg"]) + "% לכל vCPU")
+        elif h["ready_avg"] >= HOST_READY_WARN:
+            bump(1, "CPU Ready ממוצע " + str(h["ready_avg"]) + "% לכל vCPU")
+    if h["cores"] and h["vcpu_ratio"] > HOST_RATIO_WARN:
+        bump(1, "יחס vCPU:ליבה " + str(h["vcpu_ratio"]) + ":1")
+    if h["maintenance"]:
+        reasons.append("במצב Maintenance")
+    h["level"] = ("ok", "warn", "crit")[level[0]]
+    h["reasons"] = reasons
+
+
+def _update_live(env: str, si, samples: list) -> None:
+    hosts_by_mor = collect_host_live(si)
+    agg: dict = {}
+    for s in samples:
+        a = agg.setdefault(s.get("host_mor", ""), {"vms": 0, "vcpus": 0, "ready": [], "top": []})
+        a["vms"] += 1
+        a["vcpus"] += s["num_cpu"]
+        if s.get("ready_pct") is not None:
+            a["ready"].append(s["ready_pct"])
+        a["top"].append((s["cpu_pct"], s["name"]))
+    hosts, vm_host = {}, {}
+    for mor, base in hosts_by_mor.items():
+        a = agg.get(mor, {"vms": 0, "vcpus": 0, "ready": [], "top": []})
+        h = dict(base)
+        h["vms"], h["vcpus"] = a["vms"], a["vcpus"]
+        h["vcpu_ratio"] = round(a["vcpus"] / base["cores"], 1) if base["cores"] else 0
+        h["ready_avg"] = round(sum(a["ready"]) / len(a["ready"]), 2) if a["ready"] else None
+        h["ready_max"] = round(max(a["ready"]), 2) if a["ready"] else None
+        h["top_vms"] = [{"name": n, "cpu_pct": cp} for cp, n in sorted(a["top"], reverse=True)[:3]]
+        _host_verdict(h)
+        hosts[base["name"]] = h
+    for s in samples:
+        b = hosts_by_mor.get(s.get("host_mor", ""))
+        if b:
+            vm_host[s["name"]] = b["name"]
+    live[env] = {"ts": time.time(), "hosts": hosts, "vm_host": vm_host}
 
 
 def _new_acc():
@@ -86,6 +155,10 @@ def _sample_env(env: str, host: str, user: str, pwd: str) -> None:
             collect_cpu_ready(si, samples)
         except Exception as exc:
             print(f"[perf] {env} cpu-ready error: {exc}")
+        try:
+            _update_live(env, si, samples)
+        except Exception as exc:
+            print(f"[perf] {env} host-live error: {exc}")
         now =datetime.now()
         ts = now.strftime("%Y-%m-%d %H:%M")
         hour = now.strftime("%Y-%m-%d %H:00")
