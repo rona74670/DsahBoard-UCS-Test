@@ -250,6 +250,13 @@
         <dt>איך לטפל בהמלצה "לבדוק"</dt><dd>קרא את הסיבה שמופיעה מתחת לשורה, ובצע לפי הסעיפים "Limit" ו-"Co-Stop" למעלה. אחרי שינוי, תן לשרת כמה ימים וראה שהמדדים השתפרו.</dd>
       </dl></details>
 
+      <details><summary>🩺 "נתח שרת" — אבחון אוטומטי</summary><dl>
+        <dt>מה זה</dt><dd>כפתור בראש כל שרת שנפתח. הוא בודק את כל המדדים של השרת (CPU, RAM, Ready, Co-Stop, Limit, לחץ זיכרון, ה-ESXi, דיסקים וגיבוי) לפי הכללים של הדשבורד, ומציג <b>ממצאים לפי חומרה</b>, מה לעשות בכל אחד, ותשובה ישירה לשאלה "האם צריך עוד מעבדים?".</dd>
+        <dt>עברית / English</dt><dd>הכפתור בפינה מחליף בין שתי השפות. ההסבר של ה-AI תמיד באנגלית.</dd>
+        <dt>הסבר מפורט (AI)</dt><dd>שולח את הנתונים המובנים של השרת למודל ה-AI הפנימי, שמסביר בשפה פשוטה מה הבעיה ובאיזה סדר לטפל. הוא מקבל רק את מה שמוצג, והאבחון עצמו נקבע לפי כללים, לא לפי ה-AI. זה גם מה שהצ'אט הצף 🤖 רואה אחרי שניתחת שרת.</dd>
+        <dt>שים לב</dt><dd>זה מסנן ראשוני: הוא מצביע על כיוון, ואינו מחליף בדיקה בתוך השרת עצמו.</dd>
+      </dl></details>
+
       <details><summary>🔎 טיפ: איך מגלים למה שרת איטי</summary><dl>
         <dd>1. <b>CPU % / RAM %</b> של השרת גבוהים? → השרת עצמו צריך יותר משאבים.<br>
             2. <b>CPU Ready</b> גבוה? → ה-host עמוס, כנראה יותר מדי שרתים עליו. <b>Co-Stop</b> גבוה? → לשרת יותר מדי vCPUs. <b>Limit</b> 🔴? → יש הגבלה על ה-CPU שלו.<br>
@@ -281,7 +288,7 @@
 </div><!-- /layout -->
 
 <script src="/static/exceljs.min.js"></script>
-<script src="/static/sidebar.js?v=20261005c"></script>
+<script src="/static/sidebar.js?v=20261009a"></script>
 <script>
 var _rows = [];            // per-VM aggregates from /api/vcenter/perf
 var _stats = {};
@@ -415,6 +422,73 @@ function memHeads() { return memOn() ? th('לחץ זיכרון', 'mempress', 'ce
 function openHelp() { document.getElementById('help-back').style.display = 'block'; }
 function closeHelp() { document.getElementById('help-back').style.display = 'none'; }
 document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closeHelp(); });
+// ── "Analyze server": rule-based diagnosis (server side) + optional AI explanation in English ──
+var _diag = {}, _diagAi = {}, _diagBusy = {}, _diagLast = null;
+var _diagLang = (function () { try { return localStorage.getItem('perf-diag-lang') || 'he'; } catch (x) { return 'he'; } })();
+var SEV_ICON = { crit: '🔴', warn: '🟠', info: 'ℹ️', ok: '🟢' };
+function diagBox(k) { return '<div class="diag-box" data-k="' + e(k) + '" style="margin-bottom:.5rem">' + diagInner(k) + '</div>'; }
+function diagTxt(o) { return o ? (o[_diagLang] || o.en || '') : ''; }
+function diagInner(k) {
+  var r = _diag[k];
+  if (_diagBusy[k] === 'run') return '<span class="muted">🩺 מנתח את השרת… (עד כחצי דקה בפעם הראשונה)</span>';
+  if (!r) return '<button class="export-btn" onclick="runDiag(this.closest(' + "'.diag-box'" + ').dataset.k)" title="מנתח את השרת לפי כל המדדים ומציע מה לבדוק ומה לעשות">🩺 נתח שרת</button>';
+  if (r.error) return '<span class="muted">🩺 האבחון נכשל (' + e(r.error) + ') </span><button class="export-btn" onclick="runDiag(this.closest(' + "'.diag-box'" + ').dataset.k)">נסה שוב</button>';
+  var he = _diagLang === 'he';
+  var html = '<div style="padding:.5rem .8rem;border:1px solid var(--border,#30363d);border-radius:8px;font-size:.82rem;line-height:1.65">' +
+    '<div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start"><b>' + SEV_ICON[r.level] + ' 🩺 ' + (he ? 'אבחון' : 'Diagnosis') + ': ' + e(diagTxt(r.verdict)) + '</b>' +
+    '<span style="white-space:nowrap"><button class="export-btn" onclick="setDiagLang()">' + (he ? 'English' : 'עברית') + '</button> ' +
+    '<button class="export-btn" onclick="runDiag(this.closest(' + "'.diag-box'" + ').dataset.k, true)" title="הרץ מחדש">⟳</button></span></div>';
+  if (r.cpu_answer) html += '<div style="margin-top:.3rem"><b>' + (he ? 'האם צריך עוד מעבדים?' : 'Does it need more CPUs?') + '</b> ' + e(diagTxt(r.cpu_answer)) + '</div>';
+  (r.findings || []).forEach(function (f) {
+    html += '<div style="margin-top:.45rem;padding-top:.35rem;border-top:1px solid var(--border,#30363d)">' + SEV_ICON[f.sev] + ' <b>' + e(f.area) + ' — ' + e(diagTxt(f.title)) + '</b><br>' +
+      e(diagTxt(f.detail)) + (f.action && diagTxt(f.action) ? '<br><span style="color:#58a6ff"><b>' + (he ? 'מה לעשות' : 'What to do') + ':</b> ' + e(diagTxt(f.action)) + '</span>' : '') + '</div>';
+  });
+  html += '<div style="margin-top:.55rem">';
+  if (_diagBusy[k] === 'ai') html += '<span class="muted">💬 ה-AI מנתח… (יכול לקחת כדקה)</span>';
+  else html += '<button class="export-btn" onclick="explainDiag(this.closest(' + "'.diag-box'" + ').dataset.k)" title="שולח את הנתונים המובנים למודל ה-AI הפנימי; ההסבר באנגלית">💬 ' + (he ? 'הסבר מפורט (AI, באנגלית)' : 'Detailed explanation (AI)') + '</button>';
+  if (_diagAi[k]) html += '<div dir="ltr" style="margin-top:.4rem;white-space:pre-wrap;text-align:left;color:var(--text)">' + e(_diagAi[k]) + '</div>';
+  html += '</div></div>';
+  return html;
+}
+function paintDiag(k) {
+  document.querySelectorAll('.diag-box').forEach(function (b) { if (b.dataset.k === k) b.innerHTML = diagInner(k); });
+}
+function paintAllDiag() { document.querySelectorAll('.diag-box').forEach(function (b) { b.innerHTML = diagInner(b.dataset.k); }); }
+function setDiagLang() { _diagLang = _diagLang === 'he' ? 'en' : 'he'; try { localStorage.setItem('perf-diag-lang', _diagLang); } catch (x) {} paintAllDiag(); }
+async function runDiag(k, force) {
+  if (_diagBusy[k]) return;
+  var i = k.indexOf('|'), env = k.slice(0, i), name = k.slice(i + 1);
+  _diagBusy[k] = 'run'; _diagLast = k; if (force) delete _diagAi[k]; paintDiag(k);
+  try {
+    var r = await fetch('/api/vcenter/perf/diagnose?env=' + encodeURIComponent(env) + '&name=' + encodeURIComponent(name) + '&range=' + _range, { credentials: 'include' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    _diag[k] = await r.json();
+  } catch (x) { _diag[k] = { error: String(x.message || x) }; }
+  delete _diagBusy[k]; paintDiag(k);
+}
+function diagContext(k) {
+  var r = _diag[k];
+  if (!r || r.error) return '';
+  var lines = ['VM ' + r.facts.vm + ' (' + r.facts.environment + '), range ' + r.facts.range, 'FACTS: ' + JSON.stringify(r.facts), 'VERDICT: ' + r.verdict.en];
+  if (r.cpu_answer) lines.push('NEEDS MORE CPU?: ' + r.cpu_answer.en);
+  (r.findings || []).forEach(function (f) { lines.push('- [' + f.sev + '] ' + f.area + ': ' + f.title.en + ' | ' + f.detail.en + (f.action && f.action.en ? ' | ACTION: ' + f.action.en : '')); });
+  return lines.join(String.fromCharCode(10));
+}
+window.aiExtraContext = function () { return _diagLast ? diagContext(_diagLast) : ''; };
+async function explainDiag(k) {
+  if (_diagBusy[k]) return;
+  _diagBusy[k] = 'ai'; paintDiag(k);
+  try {
+    var r = await fetch('/api/ai/chat', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': window.getCsrfToken ? window.getCsrfToken() : '' },
+      body: JSON.stringify({ message: 'Using only the structured server data above, explain in plain English: (1) is there a real performance problem, (2) the most likely cause, (3) the actions in priority order. Do not invent numbers. About 150 words.', history: [], context: 'STRUCTURED SERVER DATA:' + String.fromCharCode(10) + diagContext(k) })
+    });
+    var d = await r.json();
+    _diagAi[k] = r.ok ? (d.reply || '(empty reply)') : ('AI error: ' + (d.detail || r.status));
+  } catch (x) { _diagAi[k] = 'AI error: ' + String(x.message || x); }
+  delete _diagBusy[k]; paintDiag(k);
+}
 function loadReady() { try { document.getElementById('f-ready').checked = localStorage.getItem('perf-ready') === '1'; } catch (x) {} }
 function saveReady() { try { localStorage.setItem('perf-ready', readyOn() ? '1' : '0'); } catch (x) {} }
 // ── CPU Co-Stop (too many vCPUs: P%/vCPU, >=3 warn, >=5 crit) and CPU Limit (VM held back by a configured limit) ──
@@ -740,7 +814,7 @@ async function drawChart(k) {
     var j = await r.json();
     var bkRes = await bkP, bk = bkRes.points || [];
     var d = j.data || [];
-    if (d.length < 2) { cell.innerHTML = esxiCard({ environment: env, vm_name: name }) + diskBox() + '<span class="muted">אין מספיק נתונים לגרף עדיין.</span>'; fillDisks(cell, env, name); return; }
+    if (d.length < 2) { cell.innerHTML = diagBox(k) + esxiCard({ environment: env, vm_name: name }) + diskBox() + '<span class="muted">אין מספיק נתונים לגרף עדיין.</span>'; fillDisks(cell, env, name); return; }
     var W = 900, H = 170, pl = 34, pb = 20, pt = 8, pr = 8;
     var n = d.length;
     function X(i) { return pl + (W - pl - pr) * (n === 1 ? 0 : i / (n - 1)); }
@@ -787,7 +861,7 @@ async function drawChart(k) {
       else if (!bkOn() && snN === 0) bkMsg = '<span class="muted">⚠ לא נמצאו נקודות רפליקציה / סנאפשוט לשרת בטווח הזה</span>';
       else if (errs.length) bkMsg = '<span class="muted">⚠ שרתי גיבוי שלא ענו: ' + e(errs.join(', ')) + '</span>';
     }
-    cell.innerHTML = esxiCard({ environment: env, vm_name: name }) + diskBox() + '<div class="legend"><span><i style="background:#58a6ff"></i>פיק CPU %</span><span><i style="background:#d2a8ff"></i>פיק RAM %</span>' + (bkOn() ? '<span><i style="background:#f0883e"></i>גיבוי (' + bkN + ')</span>' : '') + (showSnap ? '<span><i style="background:#3fb9a8"></i>רפליקציה/סנאפשוט (' + snN + ')</span>' : '') + '<span>' +
+    cell.innerHTML = diagBox(k) + esxiCard({ environment: env, vm_name: name }) + diskBox() + '<div class="legend"><span><i style="background:#58a6ff"></i>פיק CPU %</span><span><i style="background:#d2a8ff"></i>פיק RAM %</span>' + (bkOn() ? '<span><i style="background:#f0883e"></i>גיבוי (' + bkN + ')</span>' : '') + (showSnap ? '<span><i style="background:#3fb9a8"></i>רפליקציה/סנאפשוט (' + snN + ')</span>' : '') + '<span>' +
       (j.table === 'vm_perf_hourly' ? 'מקסימום לכל שעה' : 'מקסימום לכל יום') + ' · ' + e(name) + '</span>' + bkMsg + '</div>' +
       '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-width:1100px;height:auto;direction:ltr">' + grid + bkSvg + thr + line('max_cpu_pct', '#58a6ff') + line('max_mem_pct', '#d2a8ff') + tl + '</svg>';
     fillDisks(cell, env, name);

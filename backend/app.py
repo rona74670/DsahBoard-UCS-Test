@@ -1546,6 +1546,37 @@ def api_vcenter_perf_disks(env: str, name: str):
     return res
 
 
+@app.get("/api/vcenter/perf/diagnose")
+def api_vcenter_perf_diagnose(env: str, name: str, range: str = "7d"):
+    """Rule-based diagnosis of one VM (metrics + live ESXi + live disk latency + backup timing)."""
+    import concurrent.futures as _cf
+    import perf_diagnose
+    since, table = _perf_since(range)
+    rows = perf_store.get_summary(since, table, env, name)
+    summary = rows[0] if rows else None
+    host = None
+    live = perf_collector.live.get(env)
+    if live:
+        hn = live["vm_host"].get(name)
+        host = live["hosts"].get(hn) if hn else None
+    days = 1 if range == "24h" else int("".join(ch for ch in range if ch.isdigit()) or 7)
+    disks = backups = None
+    ex = _cf.ThreadPoolExecutor(max_workers=2)
+    fd = ex.submit(api_vcenter_perf_disks, env, name)
+    fb = ex.submit(api_vcenter_perf_backups, name, max(1, min(days, 30)), False)
+    for fut, which in ((fd, "d"), (fb, "b")):
+        try:
+            res = fut.result(timeout=45)
+            if which == "d":
+                disks = res
+            else:
+                backups = res
+        except Exception:
+            pass
+    ex.shutdown(wait=False, cancel_futures=True)
+    return perf_diagnose.diagnose(env, name, range, summary, host, disks, backups)
+
+
 @app.get("/api/vcenter/perf/rightsizing")
 def api_vcenter_perf_rightsizing(env: str | None = None, days: int = 30, min_days: int = 14,
                                  cpu_target: float = 70, mem_target: float = 80):
@@ -2718,7 +2749,17 @@ _AI_SYSTEM_PROMPT = (
     "resources, and give practical recommendations based only on the data the user "
     "or the dashboard gives you in this conversation. If you don't have enough data "
     "to answer precisely, say so instead of guessing. Reply in the same language the "
-    "user writes in (Hebrew or English)."
+    "user writes in (Hebrew or English). When the data contains a section 'STRUCTURED SERVER DATA' "
+    "(metrics of one VM plus findings from the dashboard's rule engine), base your analysis on those "
+    "numbers only, never invent values, and prioritise actions. Dashboard thresholds: CPU Ready per vCPU "
+    "<5% ok, 5-10% warning, >=10% critical, judged over time not by one peak; Co-Stop >=3% means too many "
+    "vCPUs; any memory swap or balloon means the ESXi host is squeezing the VM; disk latency <20 ms ok, "
+    "20-30 ms slow, >=30 ms bad; ESXi vCPU:core ratio above 4:1 is a risk; high CPU with low Ready and "
+    "Co-Stop means the VM itself is using the CPU (find the process), while high Ready means host "
+    "contention (move the VM, do not add vCPUs). Database servers keep memory as cache on purpose. "
+    "Do not overstate: judge severity from the findings, not from a single peak. If the verdict says no "
+    "resource problem was found, answer that no action is needed on the hypervisor side and stop: do not "
+    "invent a cause, and do not list generic checks unless the user says users are reporting slowness."
 )
 
 @app.post("/api/ai/chat")
@@ -2737,6 +2778,41 @@ def api_ai_chat(payload: AiChatIn, _: str = Depends(get_current_user)):
         print(f"[ai] chat error: {e}")
         raise HTTPException(status_code=502, detail="AI server unavailable")
     return {"reply": reply}
+
+
+@app.get("/api/ai/models", dependencies=[Depends(require_admin)])
+def api_ai_models():
+    """Admin: which model the assistant uses, what else is installed, and what is loaded (GPU/CPU)."""
+    out = {"host": f"{ollama_client.OLLAMA_HOST}:{ollama_client.OLLAMA_PORT}"}
+    for key, fn in (("configured", ollama_client.configured_model), ("installed", ollama_client.list_models),
+                    ("running", ollama_client.running_models)):
+        try:
+            out[key] = fn()
+        except Exception as e:
+            out[key] = None
+            out[key + "_error"] = f"{type(e).__name__}: {str(e)[:160]}"
+    return out
+
+
+@app.get("/api/ai/benchmark/start", dependencies=[Depends(require_admin)])
+def api_ai_benchmark_start(model: str = ""):
+    """Admin: run the 4-scenario benchmark on a model (default: the configured one) in the background."""
+    import ai_benchmark
+    try:
+        names = [m.strip() for m in model.split(",") if m.strip()] or [ollama_client.configured_model()]
+    except Exception:
+        raise HTTPException(status_code=502, detail="AI server unavailable")
+    return ai_benchmark.start(names, _AI_SYSTEM_PROMPT)
+
+
+@app.get("/api/ai/benchmark/results", dependencies=[Depends(require_admin)])
+def api_ai_benchmark_results(format: str = "json"):
+    import ai_benchmark
+    from fastapi.responses import PlainTextResponse
+    data = ai_benchmark.results()
+    if format == "text":
+        return PlainTextResponse(ai_benchmark.as_text(data), media_type="text/plain; charset=utf-8")
+    return data
 
 
 # ------------------------------------------------------------------ #

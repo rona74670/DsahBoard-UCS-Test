@@ -159,13 +159,16 @@ def prune() -> None:
                      (f"-{PERF_DAILY_RETENTION_DAYS} days",))
 
 
-def get_summary(since_bucket: str, table: str = "vm_perf_daily", env: Optional[str] = None) -> list:
+def get_summary(since_bucket: str, table: str = "vm_perf_daily", env: Optional[str] = None, vm: Optional[str] = None) -> list:
     """Per-VM aggregate over [since_bucket, now]: peak CPU/RAM (and when), averages, sample count."""
     assert table in ("vm_perf_daily", "vm_perf_hourly")
     where, params = ["p.bucket >= ?"], [since_bucket]
     if env:
         where.append("p.environment = ?")
         params.append(env)
+    if vm:
+        where.append("p.vm_name = ?")
+        params.append(vm)
     hot_min = HOT_MIN_HOURLY if table == "vm_perf_hourly" else HOT_MIN_DAILY
     sql = f"""
         SELECT p.environment, p.vm_name,
