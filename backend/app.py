@@ -1307,13 +1307,19 @@ def _bk_object_ids(key: str, client) -> dict:
     hit = _bk_obj_cache.get(key)
     if hit and _t.time() - hit[0] < _BK_OBJ_TTL:
         return hit[1]
-    ids: dict = {}
+    ids: dict = {}                       # name -> [object ids]  (one object per job the VM is in)
+
+    def _add(k, oid):
+        lst = ids.setdefault(k, [])
+        if oid not in lst:
+            lst.append(oid)
+
     objs = [o for o in client.get_backup_objects(5000) if o.get("name") and o.get("id")]
     for o in objs:
-        ids.setdefault(" ".join(o["name"].lower().split()), o["id"])
+        _add(" ".join(o["name"].lower().split()), o["id"])
     for o in objs:                       # aliases: without a trailing "(...)" / without the DNS domain
         for v in _bk_name_variants(o["name"])[1:]:
-            ids.setdefault(v, o["id"])
+            _add(v, o["id"])
     _bk_obj_cache[key] = (_t.time(), ids)
     return ids
 
@@ -1405,10 +1411,19 @@ def _bk_mark_frequent_as_replica(pts: list) -> None:
                     p["kind"] = "replica"
 
 
-def _bk_kind(b: dict) -> str:
-    """'replica' when the owning job looks like a replication/snapshot job (hourly VM replica points), else 'backup'.
-    The Veeam REST restore point carries no type, so this goes by job name, e.g. 'FT-Rep-1', 'FT-Rep-1-target'."""
-    return "replica" if _REPLICA_RE.search(str(b.get("name", ""))) else "backup"
+_ZERO_GUID = "00000000-0000-0000-0000-000000000000"
+
+
+def _bk_kind(b: dict, has_real_repo: bool = False) -> str:
+    """'replica' (replication / storage-snapshot restore points) or 'backup'.
+    The Veeam REST restore point carries no type, so: the job name ('FT-Rep-1', 'FT-Rep-1-target'), or - when this server
+    has jobs with a real repository - a job without any repository (zero id), which is how replica and 'backup from storage
+    snapshot' jobs (e.g. 'TC-INF-27', restore point type 'Snapshot') show up."""
+    if _REPLICA_RE.search(str(b.get("name", ""))):
+        return "replica"
+    if has_real_repo and str(b.get("repositoryId") or _ZERO_GUID) == _ZERO_GUID:
+        return "replica"
+    return "backup"
 
 
 @app.get("/api/vcenter/perf/backups")
@@ -1419,7 +1434,7 @@ def api_vcenter_perf_backups(name: str, days: int = 7, debug: bool = False):
     days = max(1, min(days, 183))
     since = datetime.now() - timedelta(days=days)
     variants = _bk_name_variants(name)
-    out, errors, raw, matched = [], {}, {}, {}
+    out, errors, raw, matched, n_objects = [], {}, {}, {}, {}
 
     def _one(key, factory):
         o = []
@@ -1431,18 +1446,28 @@ def api_vcenter_perf_backups(name: str, days: int = 7, debug: bool = False):
             else:
                 cli = factory()
                 ids = _bk_object_ids(key, cli)
-                oid = None
+                oids = []
                 for v in variants:
                     if v in ids:
-                        oid, matched[key] = ids[v], v
+                        oids, matched[key] = ids[v][:12], v
                         break
-                pts = cli.get_restore_points(oid) if oid else []
+                n_objects[key] = len(oids)
+                pts, seen = [], set()
+                for oid in oids:
+                    for p in cli.get_restore_points(oid):
+                        sig = (p.get("backup_id"), p.get("time"))
+                        if sig not in seen:
+                            seen.add(sig)
+                            pts.append(p)
                 if pts:
                     bmap = _bk_backups_map(key, cli)
+                    # restore points of a replica / storage-snapshot job have no repository (all-zero id); trust that only
+                    # when this server also has jobs WITH a repository, i.e. the field is really populated
+                    has_real_repo = any(str(x.get("repositoryId") or _ZERO_GUID) != _ZERO_GUID for x in bmap.values())
                     for p in pts:
                         b = bmap.get(p.get("backup_id")) or {}
                         p["job"] = b.get("name", "")
-                        p["kind"] = _bk_kind(b)
+                        p["kind"] = _bk_kind(b, has_real_repo)
                         p["backup_raw"] = b
                     _bk_mark_frequent_as_replica(pts)
                     sess = None
@@ -1492,6 +1517,7 @@ def api_vcenter_perf_backups(name: str, days: int = 7, debug: bool = False):
     if debug:
         res["raw_sample"] = raw
         res["matched_by"] = matched
+        res["objects_per_server"] = n_objects
         res["tried"] = variants
     return res
 

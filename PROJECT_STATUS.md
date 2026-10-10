@@ -521,6 +521,7 @@ Get-Service     UcsDashboard
   "לא ניתן היה לבדוק גיבויים" בשגיאה/timeout. השרתים נשאלים **במקביל** עם תקרה של 40 שנ' (`_BK_DEADLINE`);
   בצד הדפדפן ביטול אחרי 45 שנ'. Cache: אובייקטים/jobs 15 דק', נקודות/sessions 10 דק'.
 - **התאמת שם VM↔Veeam** (`_bk_name_variants`): שם מלא → בלי תיאור בסוגריים (`RKT-DB (Rakuto…)` → `rkt-db`) → שם קצר בלי דומיין. אינדקס האובייקטים כולל את אותם aliases (שם מדויק תמיד קודם); `debug=true` מחזיר `tried` ו-`matched_by`. סיכון: שמות קצרים שכיחים עלולים להתאים ל-VM אחר.
+- **תיקון (BMC-FS, 10/10/2026):** שרת שנמצא בכמה jobs ב-Veeam מופיע שם כ**אובייקט נפרד לכל job** עם אותו שם; הקוד שמר רק את הראשון (`setdefault`) ולכן החמיץ גיבויים אמיתיים (נראה כ"לא נמצא גיבוי"). עכשיו `_bk_object_ids` שומר את כולם (עד 12) והנקודות ממוזגות. סיווג Snapshot מול גיבוי: בנוסף לשם ה-job, job **בלי repository** (מזהה אפס) הוא `replica`/storage-snapshot (כמו `TC-INF-27`, סוג Snapshot ב-Veeam) — רק בשרת שבו יש גם jobs עם repository אמיתי (כך שהשדה אמין). `debug=true` מחזיר גם `objects_per_server`.
 - **מגבלות:** רזולוציית הגרף שעתית (בטווחים ארוכים יומית); ההתאמה בין vCenter ל-Veeam היא לפי שם VM; Enterprise Manager לא נכלל;
   סנאפשוטי Infinidat לא נכללים.
 - **אימות:** לא נבדק מול נתוני Veeam ל-VM עם job גיבוי רגיל וטווחי session/task — לוודא אחרי deploy.

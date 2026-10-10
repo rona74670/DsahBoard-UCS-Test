@@ -230,6 +230,12 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                          "(כמה בכל פעם)%s, או להזיז/לפזר את המשימות הכבדות.%s" % (round(s.get("avg_cpu_pct") or 0, 1), share, numa_he, room_he))
                 cpu_answer = _t("Not necessarily - the load is bursty (average %s%%). Only if the bursts hurt (jobs overrun, users complain); then add vCPUs in small steps." % round(s.get("avg_cpu_pct") or 0, 1),
                                 "לא בהכרח - העומס קופצני (ממוצע %s%%). רק אם הקפיצות פוגעות (משימות חורגות, תלונות משתמשים); אז להוסיף vCPUs בצעדים קטנים." % round(s.get("avg_cpu_pct") or 0, 1))
+                if (s.get("cs_max_pct") or 0) >= 3 and (vcpu or 0) >= 16:
+                    cs_pk, cs_ts = s.get("cs_max_pct"), s.get("cs_max_ts")
+                    act = _t(act["en"] + " Note: Co-Stop reached %s%% (at %s) during a burst. With this many vCPUs a VM needs all its cores free at once, so adding more vCPUs would likely make it worse: prefer moving/spreading the heavy jobs or scaling out." % (cs_pk, cs_ts),
+                             act["he"] + " שים לב: Co-Stop הגיע ל-%s%% (ב-%s) בזמן קפיצה. לשרת עם כל כך הרבה vCPUs צריך שכל הליבות יתפנו בו-זמנית, ולכן תוספת vCPUs כנראה תחמיר: עדיף להזיז/לפזר את המשימות הכבדות או לעשות scale-out." % (cs_pk, cs_ts))
+                    cpu_answer = _t("Probably not - the load is bursty (average %s%%) and Co-Stop reached %s%% during a burst, so more vCPUs would likely hurt." % (round(s.get("avg_cpu_pct") or 0, 1), cs_pk),
+                                    "כנראה שלא - העומס קופצני (ממוצע %s%%) ו-Co-Stop הגיע ל-%s%% בזמן קפיצה, ולכן תוספת vCPUs כנראה תזיק." % (round(s.get("avg_cpu_pct") or 0, 1), cs_pk))
             else:
                 # short recurring bursts: >=85% for under 3% of the time, but on several days/hours (a nightly job, a scan)
                 sev = "info"
