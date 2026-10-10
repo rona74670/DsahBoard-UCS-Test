@@ -1529,7 +1529,7 @@ def api_vcenter_perf_hosts():
     now = _t.time()
     envs = {}
     for env, d in list(perf_collector.live.items()):
-        envs[env] = {"age_s": int(now - d["ts"]), "hosts": d["hosts"], "vm_host": d["vm_host"]}
+        envs[env] = {"age_s": int(now - d["ts"]), "hosts": d["hosts"], "vm_host": d["vm_host"], "vm_cfg": d.get("vm_cfg", {})}
     return {"envs": envs}
 
 
@@ -2848,7 +2848,8 @@ _AI_SYSTEM_PROMPT = (
     "contention (move the VM, do not add vCPUs). Database servers keep memory as cache on purpose. "
     "Do not overstate: judge severity from the findings, not from a single peak. If the verdict says no "
     "resource problem was found, answer that no action is needed on the hypervisor side and stop: do not "
-    "invent a cause, and do not list generic checks unless the user says users are reporting slowness."
+    "invent a cause, and do not list generic checks unless the user says users are reporting slowness. "
+    "Environment names such as TC, TC8, PT and Fattal are site names: never expand or explain them."
 )
 
 @app.post("/api/ai/chat")

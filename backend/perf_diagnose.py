@@ -77,8 +77,9 @@ def _parse(ts):
 
 
 def _recent_saturation(series):
-    """(hours, since_bucket, avg_cpu, cs_peak, ready_peak) when the VM's hourly average CPU has been >= 85% for 2+ consecutive
-    hours ending right now (the latest bucket is no older than 3 hours); None otherwise. The 7-day figures dilute such a run."""
+    """(hours, since_bucket, avg_cpu, cs_peak, ready_peak) when the VM's hourly average CPU has been high (>= 75%) for most of the
+    hours ending right now: at least 3 hours, the latest bucket no older than 3 hours, and a single dip hour (60-75%) inside the
+    run does not break it. None otherwise. The 7-day figures dilute such a run."""
     if not series:
         return None
     rows = [r for r in series if (r.get("samples") or 0) >= 20]
@@ -90,16 +91,23 @@ def _recent_saturation(series):
         return None
     if datetime.now() - last > timedelta(hours=3):
         return None
-    run = []
-    for r in reversed(rows):
-        if (r.get("avg_cpu_pct") or 0) >= 85:
-            run.append(r)
+    avg = [(r.get("avg_cpu_pct") or 0) for r in rows]
+    if avg[-1] < 75:
+        return None
+    i = len(rows) - 1
+    start = i
+    while i >= 0:
+        if avg[i] >= 75:
+            start = i
+            i -= 1
+        elif avg[i] >= 60 and i - 1 >= 0 and avg[i - 1] >= 75:     # one dip hour inside the run
+            i -= 1
         else:
             break
-    if len(run) < 2:
+    run = rows[start:]
+    if len(run) < 3:
         return None
-    run.reverse()
-    return (len(run), run[0]["bucket"], sum(r.get("avg_cpu_pct") or 0 for r in run) / len(run),
+    return (len(run), run[0]["bucket"], sum((r.get("avg_cpu_pct") or 0) for r in run) / len(run),
             max(r.get("cs_max_pct") or 0 for r in run), max(r.get("ready_max_pct") or 0 for r in run))
 
 
@@ -223,8 +231,8 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                          "להוסיף vCPUs רק אם הוכח שהעומס לגיטימי." % (round(avg_cpu, 1), share_hi))
                 cpu_answer = _t("Not yet - first find out why it is pegged at 100% (likely a stuck process); more vCPUs may just feed it.",
                                 "עדיין לא - קודם להבין למה הוא תקוע על 100% (כנראה תהליך תקוע); תוספת vCPUs רק תזין אותו.")
-            elif avg_cpu >= 50:
-                sev = "crit"
+            elif avg_cpu >= 60 or (avg_cpu >= 50 and share_hi >= 10):
+                sev = "crit" if (avg_cpu >= 70 or share_hi >= 20) else "warn"
                 avg = s.get("avg_cpu_pct") or 0
                 need = min(int(vcpu or 2) * 2, max(int(vcpu or 2) + 1, int(math.ceil((vcpu or 2) * avg / 55.0))))
                 if need >= 4:
@@ -296,10 +304,11 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
         hrs, since_b, run_avg, run_cs, run_rdy = run
         facts["saturated_hours_now"] = hrs
         findings.append(_f("crit" if hrs >= 3 else "warn", "CPU now",
-                           _t("CPU has been saturated for the last %s hours" % hrs, "ה-CPU רווי כבר %s שעות אחרונות" % hrs),
-                           _t("Hourly average CPU >=85%% for %s consecutive hours up to now (since %s, average %s%%); in that period Ready peaked at %s%% and Co-Stop at %s%%. "
+                           _t("CPU has been saturated for %s%s hours" % ("at least " if hrs >= 47 else "the last ", 48 if hrs >= 47 else hrs),
+                              "ה-CPU רווי %s%s שעות" % ("לפחות " if hrs >= 47 else "ב-", 48 if hrs >= 47 else hrs)),
+                           _t("Hourly average CPU mostly >=75%% over the last %s hours up to now (since %s, average %s%%); in that period Ready peaked at %s%% and Co-Stop at %s%%. "
                               "The 7-day figures above dilute this." % (hrs, since_b, round(run_avg, 1), round(run_rdy, 1), round(run_cs, 1)),
-                              "ממוצע ה-CPU השעתי מעל 85%% במשך %s שעות רצופות עד עכשיו (מ-%s, ממוצע %s%%); בתקופה הזו Ready הגיע ל-%s%% ו-Co-Stop ל-%s%%. "
+                              "ממוצע ה-CPU השעתי בעיקר מעל 75%% ב-%s השעות האחרונות עד עכשיו (מ-%s, ממוצע %s%%); בתקופה הזו Ready הגיע ל-%s%% ו-Co-Stop ל-%s%%. "
                               "נתוני 7 הימים למעלה מטשטשים את זה." % (hrs, since_b, round(run_avg, 1), round(run_rdy, 1), round(run_cs, 1))),
                            _t("It is happening now: look inside the guest at what started at about %s (a stuck process, or a job that did not finish). %s" % (
                                   since_b[11:16], "Ready/Co-Stop stayed low, so it is the VM's own load, not the host." if run_rdy < 5 and run_cs < 3 else
@@ -307,8 +316,13 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                               "זה קורה עכשיו: לבדוק בתוך השרת מה התחיל בערך ב-%s (תהליך תקוע, או משימה שלא הסתיימה). %s" % (
                                   since_b[11:16], "Ready/Co-Stop נשארו נמוכים, ולכן זה העומס של השרת עצמו ולא ה-host." if run_rdy < 5 and run_cs < 3 else
                                   "Ready/Co-Stop היו גבוהים לעיתים, ולכן לבדוק גם את ה-host (כרטיס ה-ESXi)."))))
-        cpu_answer = _t("Not yet - the VM has been saturated for the last %s hours; first find out what is running now (it may be a stuck process)." % hrs,
-                        "עדיין לא - השרת רווי כבר %s שעות; קודם לברר מה רץ עכשיו (אולי תהליך תקוע)." % hrs)
+        if cpu_answer["en"].startswith("Yes"):
+            cpu_answer = _t(cpu_answer["en"] + " It is also saturated right now.", cpu_answer["he"] + " והוא גם רווי עכשיו.")
+        else:
+            hrs_en = "at least 48 hours" if hrs >= 47 else "the last %s hours" % hrs
+            hrs_he = "לפחות 48 שעות" if hrs >= 47 else "%s שעות" % hrs
+            cpu_answer = _t("Not yet - the VM has been saturated for %s; first find out what is running now (it may be a stuck process)." % hrs_en,
+                            "עדיין לא - השרת רווי %s; קודם לברר מה רץ עכשיו (אולי תהליך תקוע)." % hrs_he)
 
     # ---- Ready / Co-Stop / Limit -----------------------------------------------------------------
     spike_rdy, spike_cs = (s.get("ready_max_pct") or 0), (s.get("cs_max_pct") or 0)
@@ -451,8 +465,7 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                                _t("ESXi %s: no contention affecting this VM" % host.get("name"), "ESXi %s: אין תחרות שמשפיעה על השרת הזה" % host.get("name")),
                                _t(base_en + swap_en + " The host's CPU, RAM and Ready are low, so this is a capacity-planning note and not the cause of this VM's problem.",
                                   base_he + swap_he + " ה-CPU, ה-RAM וה-Ready של ה-host נמוכים, ולכן זו הערת תכנון קיבולת ולא הסיבה לבעיה בשרת הזה."),
-                               _t("No action needed for this VM. Planning: keep the vCPU:core ratio reasonable when adding VMs to this host.",
-                                  "אין צורך בפעולה לשרת הזה. לתכנון: לשמור על יחס vCPU:ליבה סביר כשמוסיפים שרתים ל-host.")))
+                               _t("", "")))   # no action text on purpose: it only made the AI pad healthy servers with "capacity planning" advice
 
     # ---- VM CPU topology: CPU hot add and cores per socket ----------------------------------------
     # vm_cfg = (cores per socket, CPU hot add). Physical sockets are assumed to be 2 per host (half the cores = one NUMA node).

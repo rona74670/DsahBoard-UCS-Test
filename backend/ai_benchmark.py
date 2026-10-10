@@ -23,7 +23,7 @@ import perf_diagnose
 _NUM_RE = re.compile(r"[0-9]+(?:[.][0-9]+)?")
 
 _QUESTION = ("Using only the structured server data above, explain in plain English: (1) is there a real performance "
-             "problem, (2) the most likely cause, (3) the actions in priority order. Do not invent numbers. About 150 words.")
+             "problem, (2) the most likely cause, (3) the actions in priority order. Do not invent numbers. About 150 words. If the verdict says no resource problem was found, answer in two sentences that no action is needed and do not list actions.")
 
 _BASE = dict(
     samples=10080, num_cpu=8, mem_gb=16, max_cpu_pct=40, max_cpu_ts="2026-10-06 10:00", avg_cpu_pct=15,

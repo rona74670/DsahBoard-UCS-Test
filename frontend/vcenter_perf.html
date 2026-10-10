@@ -250,6 +250,22 @@
         <dt>איך לטפל בהמלצה "לבדוק"</dt><dd>קרא את הסיבה שמופיעה מתחת לשורה, ובצע לפי הסעיפים "Limit" ו-"Co-Stop" למעלה. אחרי שינוי, תן לשרת כמה ימים וראה שהמדדים השתפרו.</dd>
       </dl></details>
 
+      <details><summary>🧩 סוקטים וליבות (Cores per Socket) ו-CPU Hot Add</summary><dl>
+        <dt>מה זה</dt><dd>כשמגדירים ל-VM כמה vCPUs, אפשר להגדיר גם איך הם <b>מסודרים</b>: כמה "סוקטים" וירטואליים וכמה ליבות בכל סוקט (למשל 16 vCPUs = 1 סוקט × 16 ליבות, או 2 × 8, או 16 × 1). ה-host הפיזי בנוי מ-2 סוקטים (מעבדים), ולכל סוקט הזיכרון הצמוד אליו. הצמד "סוקט + הזיכרון שלו" נקרא <b>צומת NUMA</b>, וגישה לזיכרון של אותו סוקט מהירה יותר.</dd>
+        <dt>למה זה חשוב</dt><dd>
+          <b>1. ביצועים (NUMA):</b> שרת שנכנס בתוך סוקט פיזי אחד (מספר ה-vCPUs עד מספר הליבות של סוקט) עובד הכי יעיל. שרת רחב יותר חייב להתפרס על שני סוקטים, ואז כדאי שהמערכת בתוכו תדע על כך.<br>
+          <b>2. רישוי:</b> חלק מהתוכנות סופרות סוקטים. SQL Server Standard משתמש בעד 4 סוקטים (או 24 ליבות), ו-Express בסוקט אחד (או 4 ליבות). שרת SQL עם 12 סוקטים × ליבה אחת עלול לנצל רק חלק מה-vCPUs.<br>
+          <b>3. CPU Hot Add:</b> אפשרות להוסיף CPU בזמן שהשרת פועל. כשהיא מופעלת, ה-vNUMA <b>מושבת</b>, וזה פוגע בשרתים רחבים (מעל 8 vCPUs).</dd>
+        <dt>מה מומלץ</dt><dd>
+          • שרת שנכנס בסוקט פיזי אחד: <b>סוקט אחד עם כל הליבות</b> (ברירת המחדל). בגרסאות vSphere 7 ו-8 כמה סוקטים וירטואליים לא פוגעים בביצועים של שרת כזה, ורק משנים רישוי ומה שהאפליקציה רואה.<br>
+          • שרת רחב מסוקט פיזי: לחלק <b>שווה בין הסוקטים הפיזיים</b> (למשל 32 vCPUs על host עם 24 ליבות לסוקט = 2 × 16).<br>
+          • CPU Hot Add: לכבות בשרתים גדולים אם אין צורך (דורש כיבוי השרת).<br>
+          • שרתי SQL Standard/Express: לא יותר מ-4 סוקטים (או 1 ב-Express).</dd>
+        <dt>איפה רואים את זה בדשבורד</dt><dd>
+          בכרטיס ה-ESXi של שרת פתוח (בסימון "הצג ESXi") מופיעה שורה <b>🧩 טופולוגיית CPU</b>: הסידור הנוכחי, הסידור המומלץ, מצב CPU Hot Add, ונקודת צבע (🟢 תקין · ℹ️ הערה · 🟠 מומלץ לשנות). וב"נתח שרת" מופיעים ממצאי Topology כשיש בעיה.</dd>
+        <dt>שים לב</dt><dd>ההמלצה מניחה שלכל host יש 2 סוקטים פיזיים. היא מבוססת על כללי אצבע של VMware, ובכל שינוי בהגדרה השרת צריך להיות כבוי. בשרת שרץ היטב אין חובה לשנות.</dd>
+      </dl></details>
+
       <details><summary>🩺 "נתח שרת" — אבחון אוטומטי</summary><dl>
         <dt>מה זה</dt><dd>כפתור בראש כל שרת שנפתח. הוא בודק את כל המדדים של השרת (CPU, RAM, Ready, Co-Stop, Limit, לחץ זיכרון, ה-ESXi, דיסקים וגיבוי) לפי הכללים של הדשבורד, ומציג <b>ממצאים לפי חומרה</b>, מה לעשות בכל אחד, ותשובה ישירה לשאלה "האם צריך עוד מעבדים?".</dd>
         <dt>עברית / English</dt><dd>הכפתור בפינה מחליף בין שתי השפות. ההסבר של ה-AI תמיד באנגלית.</dd>
@@ -325,12 +341,18 @@ var HL_TXT = { ok: 'תקין', warn: 'עומס בינוני', crit: 'עומס ג
 function esxiOn() { return document.getElementById('f-esxi').checked; }
 function loadEsxi() { try { document.getElementById('f-esxi').checked = localStorage.getItem('perf-esxi') === '1'; } catch (x) {} }
 function saveEsxi() { try { localStorage.setItem('perf-esxi', esxiOn() ? '1' : '0'); } catch (x) {} }
+var _hostsRetries = 0;
 async function loadHosts() {
   if (!esxiOn()) return;
   try {
     var r = await fetch('/api/vcenter/perf/hosts', { credentials: 'include' });
     _hosts = r.ok ? ((await r.json()).envs || {}) : {};
   } catch (x) { _hosts = {}; }
+  // Right after a service restart the live data is empty for a minute or two: ask again in the background (up to 8 times)
+  if (!Object.keys(_hosts).length && _hostsRetries < 8) {
+    _hostsRetries++;
+    setTimeout(function () { loadHosts().then(function () { if (Object.keys(_hosts).length) render(); }); }, 15000);
+  } else if (Object.keys(_hosts).length) _hostsRetries = 0;
 }
 function hostOf(v) {
   var d = _hosts[v.environment];
@@ -346,6 +368,40 @@ function esxiCell(v) {
   if (!h) return '<span class="muted" title="אין נתון חי (השרת כבוי או שהאיסוף עוד לא רץ)">—</span>';
   return '<span title="' + e(hostTitle(h)) + '">' + HL[h.level] + ' ' + e(h.name.split('.')[0]) + '</span>';
 }
+// ── CPU layout (cores per socket) vs what the host needs, and CPU Hot Add ──
+// Physical sockets are assumed to be 2 per host (one NUMA node = half of the host cores).
+function topoAdvice(v, h, cfg) {
+  var vcpu = v && v.num_cpu, cps = cfg && cfg[0], hot = cfg && cfg[1];
+  if (!vcpu || !cps) return null;
+  var vs = Math.floor(vcpu / cps), node = h && h.cores ? Math.floor(h.cores / 2) : 0;
+  var out = { cur: vs + ' × ' + cps, rec: '', level: 'ok', notes: [], hot: !!hot, node: node };
+  var wide = node && vcpu > node;
+  if (node && !wide) {
+    out.rec = '1 × ' + vcpu;
+    if (vs > 1) { out.level = 'info'; out.notes.push('כמה סוקטים וירטואליים לא פוגעים בביצועים ב-vSphere 7 ו-8, אבל חשובים לרישוי (למשל SQL Server) ולאפליקציות שמודעות לטופולוגיה'); }
+  } else if (wide) {
+    var nodes = Math.ceil(vcpu / node), per = Math.ceil(vcpu / nodes);
+    out.rec = nodes + ' × ' + per;
+    out.notes.push('השרת רחב מסוקט פיזי אחד (כ-' + node + ' ליבות) ולכן פרוס על כמה צמתי NUMA');
+    if (vs !== nodes) out.level = 'warn';
+  }
+  if (hot && vcpu > 8) {
+    out.notes.push('CPU Hot Add מופעל: ה-vNUMA מושבת' + (wide ? ' (פוגע בשרת רחב)' : ''));
+    if (wide) out.level = 'warn'; else if (out.level === 'ok') out.level = 'info';
+  }
+  return out;
+}
+function topoLine(v, h) {
+  var d = _hosts[v.environment], cfg = d && d.vm_cfg ? d.vm_cfg[v.vm_name] : null;
+  var row = v.num_cpu ? v : (_rows.filter(function (r) { return r.environment === v.environment && r.vm_name === v.vm_name; })[0] || v);
+  var a = topoAdvice(row, h, cfg);
+  if (!a) return '';
+  var ic = { ok: '🟢', info: 'ℹ️', warn: '🟠' }[a.level];
+  return '<br>🧩 <b>טופולוגיית CPU:</b> ' + e(a.cur) + ' (סוקטים × ליבות)' +
+    (a.rec ? ' · מומלץ: <b>' + e(a.rec) + '</b>' + (a.rec === a.cur ? ' ✓' : '') : ' · אין נתון על ה-host להמלצה') +
+    ' · CPU Hot Add: ' + (a.hot ? 'מופעל' : 'כבוי') + ' · ' + ic +
+    (a.notes.length ? '<br><span class="muted">' + e(a.notes.join(' · ')) + '</span>' : '');
+}
 function esxiCard(v) {
   if (!esxiOn()) return '';
   var h = hostOf(v);
@@ -359,7 +415,7 @@ function esxiCard(v) {
     'CPU ' + h.cpu_pct + '% · RAM ' + h.mem_pct + '% (' + h.mem_total_gb + ' GB) · CPU Ready ממוצע ' + rdy +
     ' · ' + h.vms + ' VMs · ' + h.vcpus + ' vCPU על ' + h.cores + ' ליבות (' + h.vcpu_ratio + ':1)<br>' +
     (top ? '<span class="muted">הכי עמוסים על ה-ESXi: ' + top + '</span> · ' : '') +
-    '<span class="muted">נתון רגעי' + (age != null ? ', לפני ' + age + ' שנ׳' : '') + '</span></div>';
+    '<span class="muted">נתון רגעי' + (age != null ? ', לפני ' + age + ' שנ׳' : '') + '</span>' + topoLine(v, h) + '</div>';
 }
 // ── Live per-disk latency of one VM (read from vCenter on demand; not stored, not in the chart) ──
 function diskOn() { return document.getElementById('f-disk').checked; }
@@ -533,7 +589,7 @@ async function explainDiag(k) {
     var r = await fetch('/api/ai/chat', {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': window.getCsrfToken ? window.getCsrfToken() : '' },
-      body: JSON.stringify({ message: 'Using only the structured server data above, explain in plain English: (1) is there a real performance problem, (2) the most likely cause, (3) the actions in priority order. Do not invent numbers. About 150 words.', history: [], context: 'STRUCTURED SERVER DATA:' + String.fromCharCode(10) + diagContext(k) })
+      body: JSON.stringify({ message: 'Using only the structured server data above, explain in plain English: (1) is there a real performance problem, (2) the most likely cause, (3) the actions in priority order. Do not invent numbers. About 150 words. If the verdict says no resource problem was found, answer in two sentences that no action is needed and do not list actions.', history: [], context: 'STRUCTURED SERVER DATA:' + String.fromCharCode(10) + diagContext(k) })
     });
     var d = await r.json();
     _diagAi[k] = r.ok ? (d.reply || '(empty reply)') : ('AI error: ' + (d.detail || r.status));

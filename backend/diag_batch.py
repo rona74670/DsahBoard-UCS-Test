@@ -22,7 +22,7 @@ import perf_diagnose
 import perf_store
 
 _QUESTION = ("Using only the structured server data above, explain in plain English: (1) is there a real performance "
-             "problem, (2) the most likely cause, (3) the actions in priority order. Do not invent numbers. About 150 words.")
+             "problem, (2) the most likely cause, (3) the actions in priority order. Do not invent numbers. About 150 words. If the verdict says no resource problem was found, answer in two sentences that no action is needed and do not list actions.")
 
 _state = {"running": False, "progress": "", "file": "", "error": ""}
 _lock = threading.Lock()
