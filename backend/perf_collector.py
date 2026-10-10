@@ -89,15 +89,15 @@ def _update_live(env: str, si, samples: list) -> None:
     for s in samples:
         a = agg.setdefault(s.get("host_mor", ""), {"vms": 0, "vcpus": 0, "ready": [], "top": [], "swap": 0, "balloon": 0})
         a["vms"] += 1
-        if (s.get("swap_mb") or 0) > 0:
+        if (s.get("swap_mb") or 0) >= max(50.0, 0.005 * (s.get("mem_mb") or 0)):   # a few MB of static swap is a leftover, not pressure
             a["swap"] += 1
-        if (s.get("balloon_mb") or 0) > 0:
+        if (s.get("balloon_mb") or 0) >= 50:
             a["balloon"] += 1
         a["vcpus"] += s["num_cpu"]
         if s.get("ready_pct") is not None:
             a["ready"].append(s["ready_pct"])
         a["top"].append((s["cpu_pct"], s["name"]))
-    hosts, vm_host = {}, {}
+    hosts, vm_host, vm_cfg = {}, {}, {}
     for mor, base in hosts_by_mor.items():
         a = agg.get(mor, {"vms": 0, "vcpus": 0, "ready": [], "top": [], "swap": 0, "balloon": 0})
         h = dict(base)
@@ -113,7 +113,8 @@ def _update_live(env: str, si, samples: list) -> None:
         b = hosts_by_mor.get(s.get("host_mor", ""))
         if b:
             vm_host[s["name"]] = b["name"]
-    live[env] = {"ts": time.time(), "hosts": hosts, "vm_host": vm_host}
+        vm_cfg[s["name"]] = (s.get("cps") or 0, bool(s.get("hotadd")))   # (cores per socket, CPU hot add)
+    live[env] = {"ts": time.time(), "hosts": hosts, "vm_host": vm_host, "vm_cfg": vm_cfg}
 
 
 def _new_acc():

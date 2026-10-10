@@ -226,7 +226,7 @@ def get_series(env: str, vm_name: str, since_bucket: str, table: str = "vm_perf_
                        mem_sum * 1.0 / NULLIF(samples, 0) AS avg_mem_pct, samples,
                        cpu_n_mid, cpu_n_high, mem_n_mid, mem_n_high,
                        ready_max_pct, ready_sum * 1.0 / NULLIF(ready_samples, 0) AS ready_avg_pct,
-                       mp_swap_max_mb, mp_balloon_max_mb, mp_lat_max_pct
+                       mp_swap_max_mb, mp_balloon_max_mb, mp_lat_max_pct, cs_max_pct, cs_max_ts
                 FROM {table} WHERE environment=? AND vm_name=? AND bucket >= ? ORDER BY bucket""",
             (env, vm_name, since_bucket)).fetchall()
     return [dict(r) for r in rows]

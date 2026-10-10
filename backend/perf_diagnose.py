@@ -76,6 +76,33 @@ def _parse(ts):
         return None
 
 
+def _recent_saturation(series):
+    """(hours, since_bucket, avg_cpu, cs_peak, ready_peak) when the VM's hourly average CPU has been >= 85% for 2+ consecutive
+    hours ending right now (the latest bucket is no older than 3 hours); None otherwise. The 7-day figures dilute such a run."""
+    if not series:
+        return None
+    rows = [r for r in series if (r.get("samples") or 0) >= 20]
+    if not rows:
+        return None
+    try:
+        last = datetime.strptime(rows[-1]["bucket"][:13], "%Y-%m-%d %H")
+    except Exception:
+        return None
+    if datetime.now() - last > timedelta(hours=3):
+        return None
+    run = []
+    for r in reversed(rows):
+        if (r.get("avg_cpu_pct") or 0) >= 85:
+            run.append(r)
+        else:
+            break
+    if len(run) < 2:
+        return None
+    run.reverse()
+    return (len(run), run[0]["bucket"], sum(r.get("avg_cpu_pct") or 0 for r in run) / len(run),
+            max(r.get("cs_max_pct") or 0 for r in run), max(r.get("ready_max_pct") or 0 for r in run))
+
+
 def _near_backup(ts, backups):
     """The backup point (kind 'backup') that started within the ~90 minutes before ts, or None."""
     t = _parse(ts)
@@ -91,7 +118,7 @@ def _near_backup(ts, backups):
     return None
 
 
-def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: dict, backups: dict) -> dict:
+def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: dict, backups: dict, vm_cfg=None, series=None) -> dict:
     findings = []
     facts = {"vm": name, "environment": env, "range": range_key}
 
@@ -122,7 +149,10 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
     cs_share = _pct(s.get("cs_n_warn"), cs_n)
     cs_bad = cs_n >= 30 and (s.get("cs_max_pct") or 0) >= 3 and cs_share >= 1
     lim_bad = (s.get("lim_n") or 0) > 0
-    swap = (s.get("mp_swap_max_mb") or 0) > 0
+    # A few MB of static swap is a leftover (swapped pages stay swapped until touched), not pressure.
+    swap_min = max(50.0, 0.005 * (ram_gb or 0) * 1024.0)
+    swap = (s.get("mp_swap_max_mb") or 0) >= swap_min
+    swap_tiny = 0 < (s.get("mp_swap_max_mb") or 0) < swap_min
     balloon = (s.get("mp_balloon_max_mb") or 0) > 0
     mlat = s.get("mp_lat_max_pct") or 0
     host_bad = bool(host) and host.get("level") in ("warn", "crit", "down")
@@ -217,9 +247,11 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                 share = _pct(s.get("cpu_n_high"), n)
                 room_en = " The host has CPU headroom (CPU %s%%)." % host.get("cpu_pct") if host and not host_cpu_busy else ""
                 room_he = " ל-host יש מקום ב-CPU (CPU %s%%)." % host.get("cpu_pct") if host and not host_cpu_busy else ""
-                big = (vcpu or 0) >= 16
-                numa_en = " (a VM with this many vCPUs may already span NUMA nodes, so more vCPUs can add Co-Stop)" if big else ""
-                numa_he = " (לשרת עם כל כך הרבה vCPUs ייתכן שכבר יש פריסה על כמה צמתי NUMA, ותוספת עלולה להגדיל Co-Stop)" if big else ""
+                # a VM wider than one physical socket (assumed: half the host's cores) spans NUMA nodes
+                node_cores = int((host.get("cores") or 0) // 2) if host and host.get("cores") else 24
+                big = (vcpu or 0) > node_cores
+                numa_en = (" (%s vCPUs is more than one physical socket (about %s cores), so the VM spans NUMA nodes and adding vCPUs can add Co-Stop)" % (vcpu, node_cores)) if big else ""
+                numa_he = (" (%s vCPUs זה יותר מסוקט פיזי אחד (כ-%s ליבות), ולכן השרת פרוס על כמה צמתי NUMA ותוספת vCPUs עלולה להגדיל Co-Stop)" % (vcpu, node_cores)) if big else ""
                 act = _t("Bursty load: the average is only %s%% but the VM is at >=85%% for %s%% of the time, with no contention (Ready, Co-Stop and the host CPU are fine). "
                          "This looks like batch / ETL / reporting jobs that use all vCPUs for a while. First check whether the bursts hurt (jobs overrun their window, "
                          "users complain). If not, no change is needed. If they do, more vCPUs can shorten the bursts only when the work is parallel; add in small steps "
@@ -258,7 +290,38 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                               "נגע בעומס CPU גבוה (שיא %s%% ב-%s) אך לא באופן חוזר." % (s.get("max_cpu_pct"), s.get("max_cpu_ts"))),
                            _t("No action; keep an eye on it.", "אין צורך בפעולה; לעקוב.")))
 
+    # ---- What is happening NOW: a saturated run that ends at the latest hours ------------------------
+    run = _recent_saturation(series)
+    if run:
+        hrs, since_b, run_avg, run_cs, run_rdy = run
+        facts["saturated_hours_now"] = hrs
+        findings.append(_f("crit" if hrs >= 3 else "warn", "CPU now",
+                           _t("CPU has been saturated for the last %s hours" % hrs, "ה-CPU רווי כבר %s שעות אחרונות" % hrs),
+                           _t("Hourly average CPU >=85%% for %s consecutive hours up to now (since %s, average %s%%); in that period Ready peaked at %s%% and Co-Stop at %s%%. "
+                              "The 7-day figures above dilute this." % (hrs, since_b, round(run_avg, 1), round(run_rdy, 1), round(run_cs, 1)),
+                              "ממוצע ה-CPU השעתי מעל 85%% במשך %s שעות רצופות עד עכשיו (מ-%s, ממוצע %s%%); בתקופה הזו Ready הגיע ל-%s%% ו-Co-Stop ל-%s%%. "
+                              "נתוני 7 הימים למעלה מטשטשים את זה." % (hrs, since_b, round(run_avg, 1), round(run_rdy, 1), round(run_cs, 1))),
+                           _t("It is happening now: look inside the guest at what started at about %s (a stuck process, or a job that did not finish). %s" % (
+                                  since_b[11:16], "Ready/Co-Stop stayed low, so it is the VM's own load, not the host." if run_rdy < 5 and run_cs < 3 else
+                                  "Ready/Co-Stop were high at times, so also check the host (see the ESXi card)."),
+                              "זה קורה עכשיו: לבדוק בתוך השרת מה התחיל בערך ב-%s (תהליך תקוע, או משימה שלא הסתיימה). %s" % (
+                                  since_b[11:16], "Ready/Co-Stop נשארו נמוכים, ולכן זה העומס של השרת עצמו ולא ה-host." if run_rdy < 5 and run_cs < 3 else
+                                  "Ready/Co-Stop היו גבוהים לעיתים, ולכן לבדוק גם את ה-host (כרטיס ה-ESXi)."))))
+        cpu_answer = _t("Not yet - the VM has been saturated for the last %s hours; first find out what is running now (it may be a stuck process)." % hrs,
+                        "עדיין לא - השרת רווי כבר %s שעות; קודם לברר מה רץ עכשיו (אולי תהליך תקוע)." % hrs)
+
     # ---- Ready / Co-Stop / Limit -----------------------------------------------------------------
+    spike_rdy, spike_cs = (s.get("ready_max_pct") or 0), (s.get("cs_max_pct") or 0)
+    if (spike_rdy >= 10 or spike_cs >= 10) and rdy_lv < 2 and not cs_bad:
+        many = (s.get("ready_n_crit") or 0) >= 3
+        findings.append(_f("warn" if many else "info", "Contention spike",
+                           _t("A severe, short contention spike", "קפיצת תחרות חמורה וקצרה"),
+                           _t("In a single minute CPU Ready peaked at %s%% (at %s) and Co-Stop at %s%% (at %s) - far above the 5%% / 3%% warning levels - but it did not repeat enough to count as a sustained problem." % (
+                                  round(spike_rdy, 1), s.get("ready_max_ts"), round(spike_cs, 1), s.get("cs_max_ts")),
+                              "בדקה אחת CPU Ready הגיע ל-%s%% (ב-%s) ו-Co-Stop ל-%s%% (ב-%s), הרבה מעל רמות האזהרה (5%% / 3%%), אבל זה לא חזר מספיק כדי להיחשב בעיה מתמשכת." % (
+                                  round(spike_rdy, 1), s.get("ready_max_ts"), round(spike_cs, 1), s.get("cs_max_ts"))),
+                           _t("Check what happened on the host at that minute: a vMotion/DRS move, a backup snapshot (stun), or another VM bursting. If it repeats at the same time, look at the host and the jobs scheduled then.",
+                              "לבדוק מה קרה ב-host באותה דקה: vMotion/DRS, snapshot של גיבוי (stun), או שרת אחר שקפץ. אם זה חוזר באותה שעה - לבדוק את ה-host ואת המשימות שמתוזמנות אז.")))
     if rdy_lv >= 2:
         findings.append(_f("crit" if rdy_lv == 3 else "warn", "CPU Ready",
                            _t("The VM waits for physical CPU (Ready)", "השרת ממתין למעבד פיזי (Ready)"),
@@ -288,17 +351,58 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
     # ---- Memory ----------------------------------------------------------------------------------
     is_db = bool(_DB_NAME_RE.search(name or ""))
     if swap or balloon or mlat >= 1:
-        sev = "crit" if (swap or mlat >= 5) else "warn"
+        # Is it happening now (hourly series, last 3 hours) and how big is it? swap/balloon are STATES (swapped pages stay
+        # swapped until the guest touches them, the balloon deflates slowly), so a small leftover from an earlier episode is common.
+        last_press, recent_press = None, False
+        for r in (series or []):
+            if (r.get("mp_swap_max_mb") or 0) >= swap_min or (r.get("mp_balloon_max_mb") or 0) > 0 or (r.get("mp_lat_max_pct") or 0) >= 1:
+                last_press = r.get("bucket")
+        try:
+            if last_press and datetime.now() - datetime.strptime(last_press[:13], "%Y-%m-%d %H") <= timedelta(hours=3):
+                recent_press = True
+        except Exception:
+            pass
+        ram_mb = (ram_gb or 0) * 1024.0
+        balloon_mb = s.get("mp_balloon_max_mb") or 0
+        mp_big = (s.get("mp_swap_max_mb") or 0) >= 100 or mlat >= 5 or bool(ram_mb and balloon_mb >= 0.10 * ram_mb)
+        sev = "crit" if (recent_press and (swap or mlat >= 5)) else ("warn" if (recent_press or mp_big) else "info")
+        host_mem = (host.get("mem_pct") if host else None)
+        host_roomy = host_mem is not None and host_mem < 85 and not host.get("mp_swap_vms")
+        when_en = (" It is happening now." if recent_press else (" Not seen in the last 3 hours (last hourly bucket with pressure: %s)." % last_press if last_press else
+                   (" Not visible in the last 48 hours of hourly data." if series else "")))
+        when_he = (" זה קורה עכשיו." if recent_press else (" לא נראה ב-3 השעות האחרונות (הבאקט האחרון עם לחץ: %s)." % last_press if last_press else
+                   (" לא נראה ב-48 השעות האחרונות של נתוני השעה." if series else "")))
+        if host_roomy:
+            act_en = ("The host itself has free memory (RAM %s%%), so this is not a general host shortage. Likely causes: (1) a memory limit on the Resource Pool or vApp the VM is in "
+                      "(not only on the VM itself); (2) pressure that happened earlier - swapped pages stay swapped until the guest touches them and the balloon deflates slowly, "
+                      "for example after the VM was restored or moved onto a busy host. Check vCenter events and the memory charts around the time of the peak%s. "
+                      "If it is not ongoing and small, no action is needed." % (host_mem, (" (latency peak at %s)" % s.get("mp_lat_max_ts")) if s.get("mp_lat_max_ts") else ""))
+            act_he = ("ל-host עצמו יש זיכרון פנוי (RAM %s%%), ולכן זו לא מצוקה כללית של ה-host. סיבות סבירות: (1) Memory Limit על ה-Resource Pool או ה-vApp שהשרת נמצא בהם "
+                      "(לא רק על השרת עצמו); (2) לחץ שהיה קודם - דפים שנזרקו ל-swap נשארים שם עד שהשרת נוגע בהם וה-balloon משתחרר לאט, "
+                      "למשל אחרי ששרת שוחזר או הועבר ל-host עמוס. לבדוק אירועים ב-vCenter וגרפי זיכרון סביב זמן השיא%s. "
+                      "אם זה לא נמשך וקטן - אין צורך בפעולה." % (host_mem, (" (שיא ה-latency ב-%s)" % s.get("mp_lat_max_ts")) if s.get("mp_lat_max_ts") else ""))
+        else:
+            act_en = ("First check whether the VM has a Memory Limit in vCenter (it causes balloon/swap even on a free host) and remove it, and the Resource Pool / vApp limits. "
+                      "Otherwise the ESXi itself is short of memory: see the ESXi card, move VMs away or add host memory.")
+            act_he = ("קודם לבדוק אם הוגדר ל-VM Memory Limit ב-vCenter (גורם ל-balloon/swap גם ב-host פנוי) ולהסיר, וגם Limit על Resource Pool / vApp. "
+                      "אחרת ל-ESXi עצמו חסר זיכרון: לראות את כרטיס ה-ESXi, להעביר שרתים או להוסיף זיכרון ל-host.")
         findings.append(_f(sev, "Memory pressure",
-                           _t("The host is squeezing this VM's memory", "ה-host מצר את הזיכרון של השרת"),
-                           _t("Swap max %s MB (%s min), balloon max %s MB (%s min), memory latency max %s%%." % (
-                                  s.get("mp_swap_max_mb"), s.get("mp_n_swap") or 0, s.get("mp_balloon_max_mb"), s.get("mp_n_balloon") or 0, mlat),
-                              "swap מקס' %s MB (%s דק'), balloon מקס' %s MB (%s דק'), Memory Latency מקס' %s%%." % (
-                                  s.get("mp_swap_max_mb"), s.get("mp_n_swap") or 0, s.get("mp_balloon_max_mb"), s.get("mp_n_balloon") or 0, mlat)),
-                           _t("First check whether the VM has a Memory Limit in vCenter (it causes balloon/swap even on a free host) and remove it. "
-                              "Otherwise the ESXi itself is short of memory: see the ESXi card, move VMs away or add host memory.",
-                              "קודם לבדוק אם הוגדר ל-VM Memory Limit ב-vCenter (גורם ל-balloon/swap גם ב-host פנוי) ולהסיר. "
-                              "אחרת ל-ESXi עצמו חסר זיכרון: לראות את כרטיס ה-ESXi, להעביר שרתים או להוסיף זיכרון ל-host.")))
+                           _t("The host is squeezing this VM's memory" if sev != "info" else "Past host memory pressure on this VM",
+                              "ה-host מצר את הזיכרון של השרת" if sev != "info" else "לחץ זיכרון מצד ה-host בעבר על השרת"),
+                           _t("Swap max %s MB (%s min), balloon max %s MB (%s min), memory latency max %s%%.%s" % (
+                                  s.get("mp_swap_max_mb"), s.get("mp_n_swap") or 0, s.get("mp_balloon_max_mb"), s.get("mp_n_balloon") or 0, mlat, when_en),
+                              "swap מקס' %s MB (%s דק'), balloon מקס' %s MB (%s דק'), Memory Latency מקס' %s%%.%s" % (
+                                  s.get("mp_swap_max_mb"), s.get("mp_n_swap") or 0, s.get("mp_balloon_max_mb"), s.get("mp_n_balloon") or 0, mlat, when_he)),
+                           _t(act_en, act_he)))
+    elif swap_tiny:
+        findings.append(_f("info", "Memory pressure",
+                           _t("Tiny static swap (no pressure)", "swap קטן וסטטי (אין לחץ)"),
+                           _t("%s MB of this VM's memory is swapped out (%s min of samples), with no balloon and no memory latency. That is a leftover from an earlier episode, not current pressure." % (
+                                  s.get("mp_swap_max_mb"), s.get("mp_n_swap") or 0),
+                              "%s MB מהזיכרון של השרת נמצאים ב-swap (%s דקות דגימה), בלי balloon ובלי Memory Latency. זה שריד מאירוע קודם ולא לחץ נוכחי." % (
+                                  s.get("mp_swap_max_mb"), s.get("mp_n_swap") or 0)),
+                           _t("No action needed. The pages stay swapped until the guest touches them; a vMotion or reboot clears it.",
+                              "אין צורך בפעולה. הדפים נשארים ב-swap עד שהשרת נוגע בהם; vMotion או אתחול מנקים את זה.")))
     if mem_lv >= 2:
         db_en = " This looks like a database/cache/directory (Active Directory DC) server: they keep memory as cache on purpose, so high RAM is normal and the number cannot tell whether more RAM is needed (check Page Life Expectancy / paging inside the guest)." if is_db else ""
         db_he = " נראה שזה שרת DB/Cache/Active Directory (DC): שרתים כאלה מחזיקים זיכרון כ-cache בכוונה, ולכן RAM גבוה תקין והמספר לא אומר אם צריך עוד (לבדוק Page Life Expectancy / paging בתוך השרת)." if is_db else ""
@@ -349,6 +453,48 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                                   base_he + swap_he + " ה-CPU, ה-RAM וה-Ready של ה-host נמוכים, ולכן זו הערת תכנון קיבולת ולא הסיבה לבעיה בשרת הזה."),
                                _t("No action needed for this VM. Planning: keep the vCPU:core ratio reasonable when adding VMs to this host.",
                                   "אין צורך בפעולה לשרת הזה. לתכנון: לשמור על יחס vCPU:ליבה סביר כשמוסיפים שרתים ל-host.")))
+
+    # ---- VM CPU topology: CPU hot add and cores per socket ----------------------------------------
+    # vm_cfg = (cores per socket, CPU hot add). Physical sockets are assumed to be 2 per host (half the cores = one NUMA node).
+    if vm_cfg and vcpu:
+        cps, hot_add = int(vm_cfg[0] or 0), bool(vm_cfg[1])
+        node_cores = int((host.get("cores") or 0) // 2) if host and host.get("cores") else 0
+        vsockets = (vcpu // cps) if cps else 0
+        wide = bool(node_cores) and vcpu > node_cores
+        facts["topology"] = {"cores_per_socket": cps, "virtual_sockets": vsockets, "cpu_hot_add": hot_add,
+                             "physical_cores_per_socket": node_cores or None, "spans_numa_nodes": wide}
+        if hot_add and vcpu > 8:
+            findings.append(_f("warn" if wide else "info", "Topology",
+                               _t("CPU Hot Add is enabled (vNUMA is disabled)", "CPU Hot Add מופעל (ה-vNUMA מושבת)"),
+                               _t("With CPU Hot Add on, ESXi does not present a virtual NUMA topology to the guest. This VM has %s vCPUs%s." % (
+                                      vcpu, " - more than one physical socket (about %s cores), so it spans NUMA nodes without the guest knowing it" % node_cores if wide else
+                                      " (it fits in one socket, so the impact is small)"),
+                                  "כש-CPU Hot Add מופעל, ESXi לא חושף לשרת טופולוגיית NUMA וירטואלית. לשרת הזה %s vCPUs%s." % (
+                                      vcpu, " - יותר מסוקט פיזי אחד (כ-%s ליבות), ולכן הוא פרוס על כמה צמתי NUMA בלי שהמערכת יודעת" % node_cores if wide else
+                                      " (הוא נכנס בסוקט אחד, ולכן ההשפעה קטנה)")),
+                               _t("If you do not need to add CPUs while the VM runs, turn CPU Hot Add off (Edit Settings > CPU; needs a power-off).%s" % (
+                                      " Especially for NUMA-aware workloads (SQL Server, Oracle)." if wide else ""),
+                                  "אם אין צורך להוסיף CPU בזמן שהשרת פועל - לכבות את CPU Hot Add (Edit Settings ← CPU; דורש כיבוי).%s" % (
+                                      " במיוחד ליישומים שמודעים ל-NUMA (SQL Server, Oracle)." if wide else ""))))
+        if wide and cps and node_cores:
+            nodes = -(-vcpu // node_cores)
+            if vsockets != nodes:
+                findings.append(_f("info", "Topology",
+                                   _t("Virtual CPU layout does not match the host", "מבנה הסוקטים הווירטואלי לא מתאים ל-host"),
+                                   _t("%s vCPUs are presented as %s socket(s) x %s core(s), but a physical socket here has about %s cores, so the VM needs %s socket(s)." % (
+                                          vcpu, vsockets, cps, node_cores, nodes),
+                                      "%s vCPUs מוצגים כ-%s סוקטים × %s ליבות, אבל לסוקט פיזי כאן יש כ-%s ליבות, ולכן השרת צריך %s סוקטים." % (
+                                          vcpu, vsockets, cps, node_cores, nodes)),
+                                   _t("For NUMA-aware applications set Cores per Socket so the virtual sockets equal the physical sockets used (here %s x %s); for ordinary workloads it matters little." % (nodes, -(-vcpu // nodes)),
+                                      "ליישומים שמודעים ל-NUMA להגדיר Cores per Socket כך שמספר הסוקטים הווירטואליים יהיה כמו הפיזיים בשימוש (כאן %s × %s); לעומס רגיל ההשפעה קטנה." % (nodes, -(-vcpu // nodes)))))
+        if vsockets > 4 and _DB_NAME_RE.search(name or ""):
+            express = "express" in (name or "").lower()
+            findings.append(_f("warn" if express else "info", "Topology",
+                               _t("Many virtual sockets on a database server", "הרבה סוקטים וירטואליים בשרת DB"),
+                               _t("%s vCPUs are presented as %s sockets x %s core(s). SQL Server limits by sockets: Standard uses at most 4 sockets (or 24 cores), Express 1 socket (or 4 cores), so with this layout it may use only some of the vCPUs." % (vcpu, vsockets, cps),
+                                  "%s vCPUs מוצגים כ-%s סוקטים × %s ליבות. SQL Server מוגבל לפי סוקטים: Standard עד 4 סוקטים (או 24 ליבות), Express סוקט אחד (או 4 ליבות), ולכן במבנה הזה הוא עלול לנצל רק חלק מה-vCPUs." % (vcpu, vsockets, cps)),
+                               _t("If this is SQL Server Standard/Express, regroup the vCPUs into fewer sockets (for example 2 sockets x %s cores). Check the edition first." % (vcpu // 2),
+                                  "אם זה SQL Server Standard/Express - לקבץ את ה-vCPUs לפחות סוקטים (למשל 2 סוקטים × %s ליבות). לבדוק קודם איזו מהדורה." % (vcpu // 2))))
 
     # ---- Disks -----------------------------------------------------------------------------------
     if disks and disks.get("disks"):

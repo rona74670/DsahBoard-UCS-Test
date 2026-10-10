@@ -756,6 +756,7 @@ def _collect_vms(content, custom_fields, host_name_map, host_cluster_map, ds_by_
         type=vim.VirtualMachine, all=False,
         pathSet=[
             "name", "config.hardware.numCPU", "config.hardware.memoryMB",
+            "config.hardware.numCoresPerSocket", "config.cpuHotAddEnabled",
             "config.guestFullName", "summary.guest.guestFullName",
             "runtime.powerState", "runtime.host", "datastore",
             "summary.storage.committed", "summary.storage.uncommitted",
@@ -876,6 +877,8 @@ def _props_to_vm(props, custom_fields, host_name_map, host_cluster_map, dvpg_map
         "power_state":            str(props.get("runtime.powerState", "unknown")),
         "cluster":                cluster,
         "num_cpu":                props.get("config.hardware.numCPU", 0) or 0,
+        "cores_per_socket":       props.get("config.hardware.numCoresPerSocket", 0) or 0,
+        "cpu_hot_add":            bool(props.get("config.cpuHotAddEnabled", False)),
         "memory_gb":              round((props.get("config.hardware.memoryMB", 0) or 0) / 1024, 1),
         "storage_committed_gb":   round(committed_bytes   / (1024 ** 3), 1),
         "storage_uncommitted_gb": round(uncommitted_bytes / (1024 ** 3), 1),
@@ -1115,6 +1118,7 @@ def collect_perf_samples(si) -> list:
         pathSet=[
             "name", "runtime.powerState", "runtime.maxCpuUsage", "runtime.host",
             "config.hardware.numCPU", "config.hardware.memoryMB",
+            "config.hardware.numCoresPerSocket", "config.cpuHotAddEnabled",
             "summary.quickStats.overallCpuUsage", "summary.quickStats.guestMemoryUsage",
         ],
     )
@@ -1135,6 +1139,8 @@ def collect_perf_samples(si) -> list:
             "host_mor": str(props.get("runtime.host") or ""),
             "name":    name,
             "num_cpu": props.get("config.hardware.numCPU", 0) or 0,
+            "cps":     props.get("config.hardware.numCoresPerSocket", 0) or 0,
+            "hotadd":  bool(props.get("config.cpuHotAddEnabled", False)),
             "mem_mb":  mem_mb,
             "cpu_pct": round(min(cpu_mhz / max_mhz * 100, 100.0), 1),
             "mem_pct": round(min((props.get("summary.quickStats.guestMemoryUsage", 0) or 0) / mem_mb * 100, 100.0), 1),

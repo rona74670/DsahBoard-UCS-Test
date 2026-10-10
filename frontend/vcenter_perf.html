@@ -254,6 +254,7 @@
         <dt>מה זה</dt><dd>כפתור בראש כל שרת שנפתח. הוא בודק את כל המדדים של השרת (CPU, RAM, Ready, Co-Stop, Limit, לחץ זיכרון, ה-ESXi, דיסקים וגיבוי) לפי הכללים של הדשבורד, ומציג <b>ממצאים לפי חומרה</b>, מה לעשות בכל אחד, ותשובה ישירה לשאלה "האם צריך עוד מעבדים?".</dd>
         <dt>עברית / English</dt><dd>הכפתור בפינה מחליף בין שתי השפות. ההסבר של ה-AI תמיד באנגלית.</dd>
         <dt>הסבר מפורט (AI)</dt><dd>שולח את הנתונים המובנים של השרת למודל ה-AI הפנימי, שמסביר בשפה פשוטה מה הבעיה ובאיזה סדר לטפל. הוא מקבל רק את מה שמוצג, והאבחון עצמו נקבע לפי כללים, לא לפי ה-AI. זה גם מה שהצ'אט הצף 🤖 רואה אחרי שניתחת שרת.</dd>
+        <dt>ממצאי Topology (סוקטים ו-CPU Hot Add)</dt><dd>האבחון בודק גם את הגדרות ה-CPU של השרת ב-vCenter: <b>CPU Hot Add</b> מופעל מבטל את ה-vNUMA (פוגע בשרתים רחבים), <b>Cores per Socket</b> שלא מתאים לסוקטים הפיזיים של ה-host, ושרת DB עם הרבה סוקטים וירטואליים (SQL Standard/Express מוגבלים לפי סוקטים ועלולים לנצל רק חלק מה-vCPUs). הנתון מתעדכן כל דקה (כמו ה-ESXi).</dd>
         <dt>דירוג האבחון (👍 🤔 👎)</dt><dd>בתחתית האבחון אפשר לסמן אם הוא היה <b>נכון, חלקי או לא נכון</b>, ולכתוב במשפט מה טעה. הדירוג נשמר יחד עם הנתונים שהאבחון ראה, ומשמש לתקן את הכללים והספים. <b>כל דירוג עוזר</b>, במיוחד "לא נכון".</dd>
         <dt>שים לב</dt><dd>זה מסנן ראשוני: הוא מצביע על כיוון, ואינו מחליף בדיקה בתוך השרת עצמו.</dd>
       </dl></details>
@@ -403,7 +404,8 @@ function saveMem() { try { localStorage.setItem('perf-mem', memOn() ? '1' : '0')
 // 2 = swap or heavy memory latency, 1 = balloon or some latency, 0 = none, -1 = no data
 function memLevel(v) {
   if (!v.mp_samples) return -1;
-  if (v.mp_swap_max_mb > 0 || v.mp_lat_max_pct >= MEM_LAT_CRIT) return 2;
+  var swapMin = Math.max(50, 0.005 * (v.mem_gb || 0) * 1024);   // a few MB of static swap is a leftover, not pressure
+  if (v.mp_swap_max_mb >= swapMin || v.mp_lat_max_pct >= MEM_LAT_CRIT) return 2;
   if (v.mp_balloon_max_mb > 0 || v.mp_lat_max_pct >= MEM_LAT_WARN) return 1;
   return 0;
 }

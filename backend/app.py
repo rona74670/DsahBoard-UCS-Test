@@ -1600,7 +1600,13 @@ def api_vcenter_perf_diagnose(env: str, name: str, range: str = "7d"):
         except Exception:
             pass
     ex.shutdown(wait=False, cancel_futures=True)
-    return perf_diagnose.diagnose(env, name, range, summary, host, disks, backups)
+    vm_cfg = ((live or {}).get("vm_cfg") or {}).get(name)
+    from datetime import datetime as _dt, timedelta as _td
+    try:
+        series = perf_store.get_series(env, name, (_dt.now() - _td(hours=48)).strftime("%Y-%m-%d %H:00"), "vm_perf_hourly")
+    except Exception:
+        series = None
+    return perf_diagnose.diagnose(env, name, range, summary, host, disks, backups, vm_cfg, series)
 
 
 class DiagFeedbackIn(BaseModel):

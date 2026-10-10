@@ -67,7 +67,11 @@ def _run(range_key, since, table, min_level, with_ai, limit, system_prompt):
             if live:
                 hn = live["vm_host"].get(name)
                 host = live["hosts"].get(hn) if hn else None
-            r = perf_diagnose.diagnose(env, name, range_key, s, host, {"disks": []}, None)
+            try:
+                series = perf_store.get_series(env, name, time.strftime("%Y-%m-%d %H:00", time.localtime(time.time() - 48 * 3600)), "vm_perf_hourly")
+            except Exception:
+                series = None
+            r = perf_diagnose.diagnose(env, name, range_key, s, host, {"disks": []}, None, ((live or {}).get("vm_cfg") or {}).get(name), series)
             verdicts[r["level"]] += 1
             cpu_answers[(r.get("cpu_answer") or {}).get("en", "")[:60]] += 1
             n = max(s["samples"], 1)
