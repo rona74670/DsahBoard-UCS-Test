@@ -1572,9 +1572,9 @@ def api_vcenter_perf_disks(env: str, name: str):
     return res
 
 
-@app.get("/api/vcenter/perf/diagnose")
-def api_vcenter_perf_diagnose(env: str, name: str, range: str = "7d"):
-    """Rule-based diagnosis of one VM (metrics + live ESXi + live disk latency + backup timing)."""
+def _diag_bundle(env: str, name: str, range: str = "7d") -> dict:
+    """Everything the screen shows about one VM (metrics summary, live ESXi, disks, backups, events, CPU layout)
+    plus the diagnosis computed from it. Used by the diagnosis endpoint and by the Word report."""
     import concurrent.futures as _cf
     import perf_diagnose
     since, table = _perf_since(range)
@@ -1586,17 +1586,20 @@ def api_vcenter_perf_diagnose(env: str, name: str, range: str = "7d"):
         hn = live["vm_host"].get(name)
         host = live["hosts"].get(hn) if hn else None
     days = 1 if range == "24h" else int("".join(ch for ch in range if ch.isdigit()) or 7)
-    disks = backups = None
-    ex = _cf.ThreadPoolExecutor(max_workers=2)
+    disks = backups = events = None
+    ex = _cf.ThreadPoolExecutor(max_workers=3)
     fd = ex.submit(api_vcenter_perf_disks, env, name)
     fb = ex.submit(api_vcenter_perf_backups, name, max(1, min(days, 30)), False)
-    for fut, which in ((fd, "d"), (fb, "b")):
+    fe = ex.submit(api_vcenter_perf_vm_events, env, name, max(1, min(days, 30)))
+    for fut, which in ((fd, "d"), (fb, "b"), (fe, "e")):
         try:
             res = fut.result(timeout=45)
             if which == "d":
                 disks = res
-            else:
+            elif which == "b":
                 backups = res
+            else:
+                events = res.get("events")
         except Exception:
             pass
     ex.shutdown(wait=False, cancel_futures=True)
@@ -1606,7 +1609,54 @@ def api_vcenter_perf_diagnose(env: str, name: str, range: str = "7d"):
         series = perf_store.get_series(env, name, (_dt.now() - _td(hours=48)).strftime("%Y-%m-%d %H:00"), "vm_perf_hourly")
     except Exception:
         series = None
-    return perf_diagnose.diagnose(env, name, range, summary, host, disks, backups, vm_cfg, series)
+    result = perf_diagnose.diagnose(env, name, range, summary, host, disks, backups, vm_cfg, series, events)
+    return {"env": env, "name": name, "range": range, "summary": summary, "host": host, "disks": disks, "backups": backups,
+            "events": events, "vm_cfg": vm_cfg, "series": series, "result": result}
+
+
+@app.get("/api/vcenter/perf/diagnose")
+def api_vcenter_perf_diagnose(env: str, name: str, range: str = "7d"):
+    """Rule-based diagnosis of one VM (metrics + live ESXi + live disk latency + backup timing + vCenter events)."""
+    return _diag_bundle(env, name, range)["result"]
+
+
+class PerfReportIn(BaseModel):
+    env: str
+    name: str
+    range: str = "7d"
+    lang: str = "he"
+    chart_png: str = ""            # base64 PNG of the chart drawn by the browser (optional)
+
+
+@app.post("/api/vcenter/perf/report")
+def api_vcenter_perf_report(payload: PerfReportIn, user: dict = Depends(get_current_user)):
+    """Word (.docx) report of one VM: metrics, diagnosis, ESXi, topology, disks, chart, events, backups."""
+    import base64
+    import re as _re
+    import perf_report
+    from fastapi.responses import Response
+    if payload.env not in {e_ for e_, _fn in _VC_ENVS_FOR_EVENTS} or not (0 < len(payload.name) <= 200):
+        raise HTTPException(status_code=400, detail="Invalid server")
+    if payload.range not in _PERF_RANGES:
+        raise HTTPException(status_code=400, detail="Invalid range")
+    png = b""
+    if payload.chart_png:
+        if len(payload.chart_png) > 8_000_000:
+            raise HTTPException(status_code=413, detail="Chart image too large")
+        try:
+            png = base64.b64decode(payload.chart_png, validate=False)
+        except Exception:
+            png = b""
+    bundle = _diag_bundle(payload.env, payload.name, payload.range)
+    try:
+        data = perf_report.build_docx(bundle, payload.lang, png, str(user.get("username", "")), payload.range)
+    except Exception as e:
+        print(f"[report] build error: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail="Report generation failed")
+    from datetime import datetime as _dt
+    fname = "perf_%s_%s.docx" % ((_re.sub(r"[^A-Za-z0-9._-]+", "_", payload.name)[:60] or "vm"), _dt.now().strftime("%Y%m%d_%H%M"))
+    return Response(content=data, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": 'attachment; filename="%s"' % fname})
 
 
 class DiagFeedbackIn(BaseModel):
@@ -1664,6 +1714,40 @@ def api_vcenter_perf_diagnose_feedback_list(format: str = "json", limit: int = 2
         lines.append("  facts: %s" % _json.dumps(facts, ensure_ascii=False))
         lines.append("")
     return PlainTextResponse("\n".join(lines), media_type="text/plain; charset=utf-8")
+
+
+_events_cache: dict = {}   # (env, vm) -> (ts, events)
+
+
+@app.get("/api/vcenter/perf/vm-events")
+def api_vcenter_perf_vm_events(env: str, name: str, days: int = 7):
+    """Power / reboot / reset / HA / vMotion / snapshot / reconfigure events vCenter holds for one VM (cached 2 min)."""
+    import time as _t
+    from vcenter_client import collect_vm_events, open_session
+    from pyVim.connect import Disconnect
+    ck = (env, name.lower(), days)
+    hit = _events_cache.get(ck)
+    if hit and _t.time() - hit[0] < 120:
+        return hit[1]
+    cfg = next((fn for e_, fn in _VC_ENVS_FOR_EVENTS if e_ == env), None)
+    if cfg is None:
+        raise HTTPException(status_code=404, detail="Unknown environment")
+    host, user, pwd = cfg()
+    si = None
+    try:
+        si = open_session(host, user, pwd)
+        events = collect_vm_events(si, name, days)
+    except Exception:
+        raise HTTPException(status_code=502, detail="vCenter communication error")
+    finally:
+        if si is not None:
+            try:
+                Disconnect(si)
+            except Exception:
+                pass
+    res = {"vm": name, "days": days, "events": events}
+    _events_cache[ck] = (_t.time(), res)
+    return res
 
 
 @app.get("/api/vcenter/perf/rightsizing")

@@ -37,7 +37,10 @@
     .cust-row { cursor:pointer; }
     .cust-row.expanded > td:first-child::before { content:'▼ '; font-size:0.6rem; color:var(--accent); }
     .cust-row:not(.expanded) > td:first-child::before { content:'▶ '; font-size:0.6rem; color:var(--muted); }
-    .vm-sub-row td { background:#0a0f16 !important; font-size:0.78rem; padding:0.35rem 0.7rem; }
+    :root { --sub-bg:#0a0f16; --card-bg:#0d1117; }
+    body.light-mode { --sub-bg:#f0f3f6; --card-bg:#ffffff; }
+    body.light-mode .rec.add { color:#cf222e; } body.light-mode .rec.reduce { color:#0969da; } body.light-mode .rec.ok { color:#1a7f37; } body.light-mode .rec.check { color:#9a6700; }
+    .vm-sub-row td { background:var(--sub-bg) !important; font-size:0.78rem; padding:0.35rem 0.7rem; }
     .env-badge { display:inline-block; padding:0.05rem 0.45rem; border-radius:4px; font-size:0.68rem; font-weight:700; }
     .env-badge.TC     { background:#0d1a2d; color:#79c0ff; border:1px solid #1f6feb; }
     .env-badge.TC8    { background:#001a2d; color:#79c0ff; border:1px solid #79c0ff; }

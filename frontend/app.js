@@ -685,7 +685,7 @@ async function doSaveManual(serverId) {
   try {
     await fetch(FARM.apiPrefix + '/manual-data', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': window.getCsrfToken ? window.getCsrfToken() : '' },
       body: JSON.stringify({
         server_key: serverId,
         assignment: entry.assignment || '',

@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Old-Infinidat-TC | UCS Dashboard</title>
+  <title>Old-Infinidat-TC | &#x05EA;&#x05D0; &#x05D4;&#x05D8;&#x05D9;&#x05D9;&#x05E1;</title>
   <link rel="stylesheet" href="/static/style.css" />
   <style>
     .ibox-header-meta { display:flex; gap:0.6rem; align-items:center; }
@@ -40,12 +40,13 @@
   </style>
 </head>
 <body>
+<script src="/static/auth.js"></script>
 <script>if(localStorage.getItem('sb-collapsed')==='1')document.body.className+=' sb-collapsed';</script>
 <div id="layout">
   <aside id="sidebar">
     <button id="sb-toggle" onclick="sbToggle()">
       <span class="sb-icon">&#9776;</span>
-      <span class="sb-logo">UCS Dashboard</span>
+      <span class="sb-logo">&#x05EA;&#x05D0; &#x05D4;&#x05D8;&#x05D9;&#x05D9;&#x05E1;</span>
     </button>
     <nav class="sb-nav">
       <div class="sb-group">
@@ -74,6 +75,21 @@
         </div>
       </div>
       <div class="sb-group">
+        <div class="sb-group-hdr" id="grp-vcenter" onclick="sbGroup('vcenter')">
+          <span class="sb-icon">&#x2601;</span>
+          <span class="sb-label">vCenter</span>
+          <span class="sb-arr">&#x25B6;</span>
+        </div>
+        <div class="sb-items closed" id="items-vcenter">
+          <a href="/vcenter/overview" class="sb-item"><span class="sb-dot"></span><span class="sb-label">&#x1F310; &#x05E1;&#x05E7;&#x05D9;&#x05E8;&#x05D4; &#x05DB;&#x05D5;&#x05DC;&#x05DC;&#x05EA;</span></a>
+          <a href="/dr" class="sb-item"><span class="sb-dot"></span><span class="sb-label">&#x21D4; DR Dashboard</span></a>
+          <a href="/vcenter/pt" class="sb-item"><span class="sb-dot"></span><span class="sb-label">PT-vCenter</span></a>
+          <a href="/vcenter/tc" class="sb-item"><span class="sb-dot"></span><span class="sb-label">TC-vCenter</span></a>
+          <a href="/vcenter/tc8" class="sb-item"><span class="sb-dot"></span><span class="sb-label">TC vCenter8</span></a>
+          <a href="/vcenter/fattal" class="sb-item"><span class="sb-dot"></span><span class="sb-label">Fattal-vCenter</span></a>
+        </div>
+      </div>
+      <div class="sb-group">
         <div class="sb-group-hdr disabled">
           <span class="sb-icon">&#x1F5A5;</span><span class="sb-label">Hosts</span><span class="sb-badge">בקרוב</span>
         </div>
@@ -90,6 +106,7 @@
       <span class="logo">&#x1F4BE; Infinidat iBox</span>
       <div class="ibox-header-meta">
         <span class="ibox-badge" id="sys-version">v–</span>
+        <span class="ibox-badge" id="sys-model">–</span>
         <span class="ibox-badge" id="sys-host">10.10.15.10</span>
         <button id="refresh-btn" onclick="loadAll()">&#x21BB; Refresh</button>
       </div>
@@ -296,6 +313,64 @@
     </div>
   </div>
 
+  <!-- ── Live Performance ─────────────────────────────────────────── -->
+  <div style="margin:1.5rem 1.5rem 0">
+    <div class="card">
+      <div class="card-toggle" onclick="toggleCard(this)">
+        <span class="card-toggle-icon">&#9660;</span>
+        <span class="card-title">&#x26A1; Live Performance</span>
+      </div>
+      <div class="card-body">
+        <div class="kpi-grid" style="padding:0 0 1rem">
+          <div class="kpi-card"><div class="kpi-label">Total IOPS</div><div class="kpi-value" id="perf-total-iops">&#x23F3;</div></div>
+          <div class="kpi-card"><div class="kpi-label">Read IOPS</div><div class="kpi-value" id="perf-read-iops" style="color:#58a6ff">&#x23F3;</div></div>
+          <div class="kpi-card"><div class="kpi-label">Write IOPS</div><div class="kpi-value" id="perf-write-iops" style="color:#3fb950">&#x23F3;</div></div>
+          <div class="kpi-card"><div class="kpi-label">Drive Latency</div><div class="kpi-value" id="perf-read-lat">&#x23F3;</div></div>
+          <div class="kpi-card"><div class="kpi-label">Drive Avg Resp</div><div class="kpi-value" id="perf-write-lat" style="display:none">&#x23F3;</div></div>
+          <div class="kpi-card"><div class="kpi-label">Read Throughput</div><div class="kpi-value" id="perf-read-bw" style="color:#58a6ff">&#x23F3;</div></div>
+          <div class="kpi-card"><div class="kpi-label">Write Throughput</div><div class="kpi-value" id="perf-write-bw" style="color:#3fb950">&#x23F3;</div></div>
+        </div>
+        <table id="perf-nodes-table" class="data-table">
+          <thead><tr>
+            <th>Node</th><th>State</th><th>Read IOPS</th><th>Write IOPS</th>
+            <th>Read Latency</th><th>Write Latency</th><th>Read / Write BW</th>
+          </tr></thead>
+          <tbody><tr class="loading-row"><td colspan="7">Loading&#x2026;</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Hardware Status ───────────────────────────────────────────── -->
+  <div style="margin:1.5rem 1.5rem 0">
+    <div class="card">
+      <div class="card-toggle" onclick="toggleCard(this)">
+        <span class="card-toggle-icon">&#9660;</span>
+        <span class="card-title">&#x1F527; Hardware Status &#x2014; Drives &amp; FC Ports</span>
+      </div>
+      <div class="card-body">
+        <div id="hw-fault-bar" style="display:none;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem"></div>
+        <h4 style="color:var(--muted);font-size:0.8rem;font-weight:600;margin-bottom:0.4rem">
+          &#x1F4BE; Drives &nbsp;
+          <span id="drives-table-note" style="font-size:0.75rem;font-weight:400">Loading&#x2026;</span>
+        </h4>
+        <table id="drives-table" class="data-table" style="margin-bottom:1.5rem">
+          <thead><tr>
+            <th>#</th><th>Location</th><th>State</th><th>Type</th><th>Size</th><th>Model</th><th>Serial</th>
+          </tr></thead>
+          <tbody><tr class="loading-row"><td colspan="7">Loading&#x2026;</td></tr></tbody>
+        </table>
+        <h4 style="color:var(--muted);font-size:0.8rem;font-weight:600;margin-bottom:0.4rem">&#x1F310; FC Ports</h4>
+        <table id="fc-ports-table" class="data-table">
+          <thead><tr>
+            <th>Port</th><th>Link State</th><th>Speed</th><th>WWPN</th><th>Enabled</th>
+          </tr></thead>
+          <tbody><tr class="loading-row"><td colspan="5">Loading&#x2026;</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <div style="margin:0 1.5rem 1.5rem">
     <div class="card">
       <div class="card-toggle" onclick="toggleCard(this)">
@@ -393,12 +468,13 @@
     </div>
   </div>
 
-  <footer>UCS Dashboard &copy; 2026 | Old-Infinidat-TC</footer>
+  <footer>&#x05EA;&#x05D0; &#x05D4;&#x05D8;&#x05D9;&#x05D9;&#x05E1; &copy; 2026 | Old-Infinidat-TC</footer>
   </div><!-- /content-wrap -->
 </div><!-- /layout -->
 
-<script src="/static/sidebar.js"></script>
-<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-<script src="/static/infinidat.js"></script>
+<script src="/static/sidebar.js?v=20261005c"></script>
+<script src="/static/xlsx.full.min.js"></script>
+<script src="/static/infinidat.js?v=20260930a"></script>
+<script src="/static/lang.js"></script>
 </body>
 </html>

@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Device Registry | UCS Dashboard</title>
+  <title>Device Registry | &#x05EA;&#x05D0; &#x05D4;&#x05D8;&#x05D9;&#x05D9;&#x05E1;</title>
   <link rel="stylesheet" href="/static/style.css" />
   <style>
     /* ── Page layout ────────────────────────────────────────────── */
@@ -97,12 +97,13 @@
   </style>
 </head>
 <body>
+<script src="/static/auth.js"></script>
 <script>if(localStorage.getItem('sb-collapsed')==='1')document.body.className+=' sb-collapsed';</script>
 <div id="layout">
   <aside id="sidebar">
     <button id="sb-toggle" onclick="sbToggle()">
       <span class="sb-icon">&#9776;</span>
-      <span class="sb-logo">UCS Dashboard</span>
+      <span class="sb-logo">&#x05EA;&#x05D0; &#x05D4;&#x05D8;&#x05D9;&#x05D9;&#x05E1;</span>
     </button>
     <nav class="sb-nav">
       <div class="sb-group">
@@ -128,6 +129,19 @@
           <a href="/infinidat/tc"     class="sb-item"><span class="sb-dot"></span><span class="sb-label">TC iBox-03</span></a>
           <a href="/infinidat/tc-old" class="sb-item"><span class="sb-dot"></span><span class="sb-label">Old-Infinidat-TC</span></a>
           <a href="/infinidat/pt"     class="sb-item"><span class="sb-dot"></span><span class="sb-label">Infinidat-PT</span></a>
+        </div>
+      </div>
+      <div class="sb-group">
+        <div class="sb-group-hdr" id="grp-vcenter" onclick="sbGroup('vcenter')">
+          <span class="sb-icon">&#x2601;</span>
+          <span class="sb-label">vCenter</span>
+          <span class="sb-arr">&#x25B6;</span>
+        </div>
+        <div class="sb-items closed" id="items-vcenter">
+          <a href="/vcenter/pt" class="sb-item"><span class="sb-dot"></span><span class="sb-label">PT-vCenter</span></a>
+          <a href="/vcenter/tc" class="sb-item"><span class="sb-dot"></span><span class="sb-label">TC-vCenter</span></a>
+          <a href="/vcenter/tc8" class="sb-item"><span class="sb-dot"></span><span class="sb-label">TC vCenter8</span></a>
+          <a href="/vcenter/fattal" class="sb-item"><span class="sb-dot"></span><span class="sb-label">Fattal-vCenter</span></a>
         </div>
       </div>
       <div class="sb-group">
@@ -182,8 +196,8 @@
         <div class="table-wrap">
           <table id="dev-table">
             <thead><tr>
-              <th>שם</th><th>סוג</th><th>Farm</th><th>Host / IP</th>
-              <th>Port</th><th>Protocol</th><th>הערות</th><th>Status</th><th>פעולות</th>
+              <th>שם</th><th>סוג</th><th>שימוש</th><th>Farm</th>
+              <th>IP רגיל</th><th>ILO/iDRAC</th><th>הערות</th><th>Status</th><th>פעולות</th>
             </tr></thead>
             <tbody id="dev-tbody"></tbody>
           </table>
@@ -218,6 +232,15 @@
 
       <div class="form-row two-col">
         <div>
+          <label>שימוש</label>
+          <select id="f-role">
+            <option value="">ללא הגדרה</option>
+            <option>שרת מארח</option>
+            <option>עבור סטוראג'</option>
+            <option>שימוש נוסף</option>
+          </select>
+        </div>
+        <div>
           <label>Farm</label>
           <select id="f-farm">
             <option>TC-FARM</option>
@@ -226,23 +249,16 @@
             <option>ALL</option>
           </select>
         </div>
-        <div>
-          <label>Enabled</label>
-          <select id="f-enabled">
-            <option value="1">כן</option>
-            <option value="0">לא</option>
-          </select>
-        </div>
       </div>
 
       <div class="form-row two-col">
         <div>
-          <label>Host / IP</label>
-          <input type="text" id="f-host" placeholder="10.10.x.x" />
+          <label>IP רגיל</label>
+          <input type="text" id="f-ip" placeholder="10.10.x.x" />
         </div>
         <div>
-          <label>Port</label>
-          <input type="number" id="f-port" placeholder="443" value="443" />
+          <label>ILO / iDRAC IP</label>
+          <input type="text" id="f-ilo" placeholder="10.10.x.x" />
         </div>
       </div>
 
@@ -260,6 +276,20 @@
         <div>
           <label>Username</label>
           <input type="text" id="f-user" placeholder="admin" />
+        </div>
+      </div>
+
+      <div class="form-row two-col">
+        <div>
+          <label>Port</label>
+          <input type="number" id="f-port" placeholder="443" value="443" />
+        </div>
+        <div>
+          <label>Enabled</label>
+          <select id="f-enabled">
+            <option value="1">כן</option>
+            <option value="0">לא</option>
+          </select>
         </div>
       </div>
 
@@ -281,10 +311,10 @@
     </div>
   </div>
 
-  <footer>UCS Dashboard &copy; 2026 | Device Registry</footer>
+  <footer>&#x05EA;&#x05D0; &#x05D4;&#x05D8;&#x05D9;&#x05D9;&#x05E1; &copy; 2026 | Device Registry</footer>
   </div><!-- /content-wrap -->
 </div><!-- /layout -->
-  <script src="/static/sidebar.js"></script>
+  <script src="/static/sidebar.js?v=20261005c"></script>
 
   <script>
   let allDevices = [];
@@ -320,7 +350,7 @@
     const q = document.getElementById('dev-filter').value.toLowerCase().trim();
     const filtered = q
       ? allDevices.filter(d =>
-          [d.name, d.type, d.farm, d.host, d.notes].some(v =>
+          [d.name, d.type, d.role, d.farm, d.ip_address, d.ilo_address, d.host, d.notes].some(v =>
             String(v ?? '').toLowerCase().includes(q)))
       : allDevices;
 
@@ -333,11 +363,11 @@
       <tr>
         <td style="font-weight:600;color:var(--accent)">${esc(d.name)}</td>
         <td><span class="type-badge type-${esc(d.type)}">${esc(d.type)}</span></td>
+        <td>${esc(d.role || '—')}</td>
         <td>${esc(d.farm)}</td>
-        <td>${esc(d.host)}</td>
-        <td>${esc(d.port)}</td>
-        <td>${esc(d.protocol)}</td>
-        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(d.notes)}">${esc(d.notes)}</td>
+        <td>${esc(d.ip_address || d.host || '—')}</td>
+        <td>${d.ilo_address ? `<span style="font-family:monospace;font-size:0.78rem">${esc(d.ilo_address)}</span>` : '—'}</td>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(d.notes)}">${esc(d.notes)}</td>
         <td><span class="enabled-dot ${d.enabled ? 'on' : 'off'}"></span> ${d.enabled ? 'פעיל' : 'כבוי'}</td>
         <td>
           <button class="action-btn" onclick="openModal(${d.id})">&#x270F; ערוך</button>
@@ -356,25 +386,28 @@
     if (id) {
       const d = allDevices.find(x => x.id === id);
       if (!d) return;
-      document.getElementById('edit-id').value   = id;
-      document.getElementById('f-name').value     = d.name     ?? '';
-      document.getElementById('f-type').value     = d.type     ?? 'Generic';
-      document.getElementById('f-farm').value     = d.farm     ?? 'ALL';
-      document.getElementById('f-host').value     = d.host     ?? '';
-      document.getElementById('f-port').value     = d.port     ?? 443;
-      document.getElementById('f-protocol').value = d.protocol ?? 'https';
-      document.getElementById('f-user').value     = d.username ?? '';
-      document.getElementById('f-pass').value     = '';
-      document.getElementById('f-notes').value    = d.notes    ?? '';
-      document.getElementById('f-enabled').value  = d.enabled ? '1' : '0';
+      document.getElementById('edit-id').value    = id;
+      document.getElementById('f-name').value      = d.name        ?? '';
+      document.getElementById('f-type').value      = d.type        ?? 'Generic';
+      document.getElementById('f-role').value      = d.role        ?? '';
+      document.getElementById('f-farm').value      = d.farm        ?? 'ALL';
+      document.getElementById('f-ip').value        = d.ip_address  ?? '';
+      document.getElementById('f-ilo').value       = d.ilo_address ?? '';
+      document.getElementById('f-port').value      = d.port        ?? 443;
+      document.getElementById('f-protocol').value  = d.protocol    ?? 'https';
+      document.getElementById('f-user').value      = d.username    ?? '';
+      document.getElementById('f-pass').value      = '';
+      document.getElementById('f-notes').value     = d.notes       ?? '';
+      document.getElementById('f-enabled').value   = d.enabled ? '1' : '0';
     } else {
       document.getElementById('edit-id').value = '';
-      ['f-name','f-host','f-user','f-pass','f-notes'].forEach(id => document.getElementById(id).value = '');
-      document.getElementById('f-port').value     = '443';
-      document.getElementById('f-type').value     = 'Generic';
-      document.getElementById('f-farm').value     = 'ALL';
-      document.getElementById('f-protocol').value = 'https';
-      document.getElementById('f-enabled').value  = '1';
+      ['f-name','f-ip','f-ilo','f-user','f-pass','f-notes'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('f-port').value      = '443';
+      document.getElementById('f-type').value      = 'Generic';
+      document.getElementById('f-role').value      = '';
+      document.getElementById('f-farm').value      = 'ALL';
+      document.getElementById('f-protocol').value  = 'https';
+      document.getElementById('f-enabled').value   = '1';
     }
     modal.classList.add('open');
   }
@@ -386,16 +419,19 @@
   async function saveDevice() {
     const id   = document.getElementById('edit-id').value;
     const body = {
-      farm:     document.getElementById('f-farm').value,
-      name:     document.getElementById('f-name').value.trim(),
-      type:     document.getElementById('f-type').value,
-      host:     document.getElementById('f-host').value.trim(),
-      username: document.getElementById('f-user').value.trim(),
-      password: document.getElementById('f-pass').value,
-      port:     parseInt(document.getElementById('f-port').value) || 443,
-      protocol: document.getElementById('f-protocol').value,
-      notes:    document.getElementById('f-notes').value.trim(),
-      enabled:  document.getElementById('f-enabled').value === '1',
+      farm:        document.getElementById('f-farm').value,
+      name:        document.getElementById('f-name').value.trim(),
+      type:        document.getElementById('f-type').value,
+      role:        document.getElementById('f-role').value,
+      host:        document.getElementById('f-ip').value.trim(),
+      ip_address:  document.getElementById('f-ip').value.trim(),
+      ilo_address: document.getElementById('f-ilo').value.trim(),
+      username:    document.getElementById('f-user').value.trim(),
+      password:    document.getElementById('f-pass').value,
+      port:        parseInt(document.getElementById('f-port').value) || 443,
+      protocol:    document.getElementById('f-protocol').value,
+      notes:       document.getElementById('f-notes').value.trim(),
+      enabled:     document.getElementById('f-enabled').value === '1',
     };
     if (!body.name) { alert('שם התקן הוא שדה חובה'); return; }
 
@@ -404,7 +440,7 @@
     try {
       const res = await fetch(url, {
         method,
-        headers: {'Content-Type': 'application/json'},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': window.getCsrfToken ? window.getCsrfToken() : ''},
         body: JSON.stringify(body),
       });
       if (!res.ok) { const e = await res.json(); alert(e.detail || 'שגיאה בשמירה'); return; }
@@ -417,7 +453,7 @@
 
   async function confirmDelete(id) {
     if (!confirm('למחוק את ההתקן?')) return;
-    await fetch(`/api/devices/${id}`, { method: 'DELETE' });
+    await fetch(`/api/devices/${id}`, { method: 'DELETE', headers: {'X-CSRF-Token': window.getCsrfToken ? window.getCsrfToken() : ''} });
     loadDevices();
   }
 
@@ -425,7 +461,7 @@
     const id = document.getElementById('edit-id').value;
     if (!id) return;
     if (!confirm('למחוק את ההתקן?')) return;
-    await fetch(`/api/devices/${id}`, { method: 'DELETE' });
+    await fetch(`/api/devices/${id}`, { method: 'DELETE', headers: {'X-CSRF-Token': window.getCsrfToken ? window.getCsrfToken() : ''} });
     closeModal();
     loadDevices();
   }
@@ -437,5 +473,6 @@
 
   window.addEventListener('DOMContentLoaded', loadDevices);
   </script>
+<script src="/static/lang.js"></script>
 </body>
 </html>

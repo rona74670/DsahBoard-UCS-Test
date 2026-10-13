@@ -19,6 +19,12 @@ ENV/
 backend/.env
 .env
 
+# TLS certificates and private keys
+cert/
+*.pem
+*.key
+*.pfx
+
 # SQLite DB (contains passwords + personal data)
 backend/dashboard.db
 backend/*.db
@@ -46,6 +52,21 @@ desktop.ini
 *.swp
 *.swo
 
-# Temp
+# Temp / patch artifacts
 *.tmp
 *.bak
+*.patched
+*.migrated.bak
+
+# Diagnostic and operational output files
+*_done.txt
+*_out.txt
+*_result.txt
+sec*.txt
+firewall_rules_mig/
+
+# Scripts directory (maintenance scripts, not production code)
+scripts/
+
+# Customers data directory
+Customers/

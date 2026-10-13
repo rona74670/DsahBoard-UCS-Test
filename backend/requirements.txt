@@ -3,3 +3,9 @@ uvicorn[standard]==0.30.1
 requests==2.32.3
 urllib3==2.2.2
 python-dotenv==1.0.1
+pyVmomi
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+openpyxl==3.1.5
+ldap3==2.9.1
+python-docx==1.2.0

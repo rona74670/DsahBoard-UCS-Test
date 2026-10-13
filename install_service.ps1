@@ -16,10 +16,13 @@ $ErrorActionPreference = "Stop"
 # ── Configuration ─────────────────────────────────────────────────────────────
 $ServiceName  = "UcsDashboard"
 $DisplayName  = "UCS Dashboard (FastAPI)"
-$Description  = "UCS Manager monitoring dashboard – FastAPI on port 9000"
+$Description  = "UCS Manager monitoring dashboard - FastAPI on port 9000"
 $Port         = 9000
 $ScriptDir    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BackendDir   = Join-Path $ScriptDir "backend"
+$CertDir      = Join-Path $ScriptDir "Cert"
+$CertPem      = Join-Path $CertDir "cert.pem"
+$KeyPem       = Join-Path $CertDir "key.pem"
 $NssmDir      = Join-Path $ScriptDir "tools\nssm"
 $NssmExe      = Join-Path $NssmDir "nssm.exe"
 $NssmUrl      = "https://nssm.cc/release/nssm-2.24.zip"
@@ -40,9 +43,16 @@ if (-not $PythonExe) {
 
 Write-Host "`n=== UCS Dashboard – Windows Service Installer ===" -ForegroundColor Cyan
 Write-Host "  Backend dir : $BackendDir"
+Write-Host "  Cert file   : $CertPem"
+Write-Host "  Key file    : $KeyPem"
 Write-Host "  Python      : $PythonExe"
 Write-Host "  Service name: $ServiceName"
 Write-Host "  Port        : $Port`n"
+
+if (-not (Test-Path $CertPem) -or -not (Test-Path $KeyPem)) {
+    Write-Error "HTTPS certificate files not found. Expected: $CertPem and $KeyPem"
+    exit 1
+}
 
 # ── Download NSSM if not present ─────────────────────────────────────────────
 if (-not (Test-Path $NssmExe)) {
@@ -83,7 +93,7 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 # ── Install service ───────────────────────────────────────────────────────────
 Write-Host "[3/4] Installing service..." -ForegroundColor Yellow
 
-$uvicornArgs = "-m uvicorn app:app --host 0.0.0.0 --port $Port --workers 1"
+$uvicornArgs = "-m uvicorn app:app --host 0.0.0.0 --port $Port --workers 1 --ssl-certfile `"$CertPem`" --ssl-keyfile `"$KeyPem`""
 
 & $NssmExe install      $ServiceName $PythonExe $uvicornArgs
 & $NssmExe set          $ServiceName AppDirectory    $BackendDir
@@ -106,7 +116,7 @@ Start-Sleep -Seconds 4
 $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($svc -and $svc.Status -eq "Running") {
     Write-Host "`n✅  Service '$ServiceName' is RUNNING on port $Port" -ForegroundColor Green
-    Write-Host "    Dashboard: http://localhost:$Port" -ForegroundColor Cyan
+    Write-Host "    Dashboard: https://tatayas.allegronet.co.il:$Port" -ForegroundColor Cyan
 } else {
     Write-Warning "Service may not have started. Check logs:`n  $StdoutLog`n  $StderrLog"
 }

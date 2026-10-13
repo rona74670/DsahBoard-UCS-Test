@@ -631,6 +631,111 @@ function escHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
+// ── Performance ─────────────────────────────────────────────────────────
+function renderPerformance(d) {
+  setKpi('perf-total-iops',  (d.total_iops  ?? 0).toLocaleString());
+  setKpi('perf-read-iops',   (d.total_read_iops  ?? 0).toLocaleString());
+  setKpi('perf-write-iops',  (d.total_write_iops ?? 0).toLocaleString());
+  setKpi('perf-read-lat',    d.avg_drive_lat_ms != null ? `${d.avg_drive_lat_ms} ms` : '–');
+  setKpi('perf-write-lat',   d.avg_drive_lat_ms != null ? `${d.avg_drive_lat_ms} ms` : '–');
+  setKpi('perf-read-bw',     `${d.total_read_bw_mbps  ?? 0} MB/s`);
+  setKpi('perf-write-bw',    `${d.total_write_bw_mbps ?? 0} MB/s`);
+
+  const tbody = document.querySelector('#perf-nodes-table tbody');
+  if (!tbody) return;
+  const nodes = d.nodes || [];
+  if (!nodes.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted)">No performance data available (check API access)</td></tr>';
+    return;
+  }
+  tbody.innerHTML = nodes.map(n => {
+    const stateCol = n.state === 'ACTIVE' ? 'var(--ok)' : 'var(--critical)';
+    const lat      = n.drive_lat_ms ?? null;
+    const latCol   = lat != null && lat > 30 ? 'color:var(--critical);font-weight:700'
+                   : lat != null && lat > 15  ? 'color:var(--major);font-weight:600'
+                   : 'color:var(--ok)';
+    return `<tr>
+      <td><b>${escHtml(n.name)}</b></td>
+      <td style="color:${stateCol};font-size:0.78rem">${escHtml(n.state)}</td>
+      <td style="font-weight:600;color:#58a6ff">${(n.read_iops  ?? 0).toLocaleString()}</td>
+      <td style="font-weight:600;color:#3fb950">${(n.write_iops ?? 0).toLocaleString()}</td>
+      <td style="${latCol}">${lat != null ? lat + ' ms' : '–'}</td>
+      <td style="${latCol}">${lat != null ? lat + ' ms' : '–'}</td>
+      <td style="font-size:0.78rem">${n.read_bw_mbps ?? 0} / ${n.write_bw_mbps ?? 0} MB/s</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Hardware Faults ──────────────────────────────────────────────────────
+function renderHardware(d) {
+  const sum = d.summary || {};
+
+  // Fault bar
+  const faultBar = document.getElementById('hw-fault-bar');
+  if (faultBar) {
+    const driveFaults = sum.failed_drives || 0;
+    const fcFaults    = sum.fc_down       || 0;
+    faultBar.style.display = 'flex';
+    if (driveFaults > 0 || fcFaults > 0) {
+      faultBar.innerHTML =
+        (driveFaults > 0 ? `<span class="pill pill-error">&#x2715; ${driveFaults} Failed Drive${driveFaults > 1 ? 's' : ''}</span>` : '') +
+        (fcFaults    > 0 ? `<span class="pill pill-warn">&#x26A0; ${fcFaults} FC Port${fcFaults > 1 ? 's' : ''} Down</span>` : '');
+    } else {
+      faultBar.innerHTML = '<span class="pill pill-ok">&#x2714; All drives and FC ports healthy</span>';
+    }
+  }
+
+  // Drives table — show only failed drives, or all if none failed
+  const noteEl  = document.getElementById('drives-table-note');
+  const drvBody = document.querySelector('#drives-table tbody');
+  if (drvBody) {
+    const hasFailed  = (d.failed_drives || []).length > 0;
+    const driveRows  = hasFailed ? d.failed_drives : (d.drives || []);
+    if (noteEl) {
+      noteEl.textContent = hasFailed
+        ? `${driveRows.length} FAILED (${Object.entries(driveRows.reduce((a, x) => { const t = x.type || 'Unknown'; a[t] = (a[t] || 0) + 1; return a; }, {})).map(([t, n]) => `${n} ${t}`).join(', ')}) — requires attention!`
+        : `All ${driveRows.length} drives healthy`;
+      noteEl.style.color = hasFailed ? 'var(--critical)' : 'var(--ok)';
+    }
+    drvBody.innerHTML = driveRows.length
+      ? driveRows.map(dr => {
+          const stCol = dr.state === 'ACTIVE' ? 'var(--ok)' : 'var(--critical)';
+          return `<tr>
+            <td>${dr.index ?? dr.id}</td>
+            <td>${escHtml(dr.enc_index != null && dr.enc_index !== '' ? `Enclosure ${dr.enc_index} / Slot ${dr.slot ?? dr.index ?? '?'}` : `Slot ${dr.slot ?? dr.index ?? '?'}`)}</td>
+            <td><b style="color:${stCol}">${escHtml(dr.state)}</b></td>
+            <td style="font-size:0.78rem;color:var(--muted)">${escHtml(dr.type || '–')}</td>
+            <td>${dr.size_tb > 0 ? dr.size_tb + ' TB' : '–'}</td>
+            <td style="font-size:0.78rem">${escHtml(dr.model || '–')}</td>
+            <td style="font-size:0.72rem;font-family:monospace;color:var(--muted)">${escHtml(dr.serial || '–')}</td>
+          </tr>`;
+        }).join('')
+      : '<tr><td colspan="7" style="text-align:center;color:var(--ok)">&#x2714; No drive faults</td></tr>';
+  }
+
+  // FC Ports table
+  const fcBody = document.querySelector('#fc-ports-table tbody');
+  if (fcBody) {
+    const ports = d.fc_ports || [];
+    fcBody.innerHTML = ports.length
+      ? ports.map(p => {
+          const isUp = p.state === 'LINK_UP';
+          const stCol = isUp ? 'var(--ok)' : p.enabled ? 'var(--critical)' : 'var(--muted)';
+          const speed = p.speed_mbps ? Math.round(p.speed_mbps / 1000) + ' Gb/s' : '–';
+          return `<tr>
+            <td><b>${escHtml(p.name)}</b></td>
+            <td style="color:${stCol};font-weight:600">${escHtml(p.state)}</td>
+            <td>${speed}</td>
+            <td style="font-size:0.72rem;font-family:monospace;color:var(--muted)">${escHtml(p.wwpn || '–')}</td>
+            <td>${p.enabled
+              ? '<span class="pill pill-ok" style="font-size:0.7rem">Enabled</span>'
+              : '<span class="pill pill-warn" style="font-size:0.7rem">Disabled</span>'}</td>
+          </tr>`;
+        }).join('')
+      : '<tr><td colspan="5" style="text-align:center;color:var(--muted)">No FC port data</td></tr>';
+  }
+}
+
 // ── Main load ───────────────────────────────────────────────────────────
 async function loadAll() {
   const btn = document.getElementById('refresh-btn');
@@ -641,6 +746,7 @@ async function loadAll() {
     const sum = await apiFetch('/summary');
 
     document.getElementById('sys-version').textContent = `v${sum.system?.version || '–'}`;
+    document.getElementById('sys-model').textContent   = sum.system?.model || '–';
     document.getElementById('sys-host').textContent    = sum.system?.host || '';
 
     const cap = sum.capacity || {};
@@ -692,6 +798,8 @@ async function loadAll() {
       apiFetch('/cgs').then(renderCGs).catch(e => console.warn('cgs:', e)),
       apiFetch('/hosts').then(renderHosts).catch(e => console.warn('hosts:', e)),
       apiFetch('/capacity-trend').then(renderCapacityTrend).catch(e => console.warn('trend:', e)),
+      apiFetch('/performance').then(renderPerformance).catch(e => console.warn('performance:', e)),
+      apiFetch('/hardware').then(renderHardware).catch(e => console.warn('hardware:', e)),
     ]);
 
     // 3. Snapshots last (SLOW — paginates 2500+)

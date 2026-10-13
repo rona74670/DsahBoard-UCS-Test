@@ -1,18 +1,19 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FATTAL | UCS Dashboard</title>
+  <title>FATTAL | &#x05EA;&#x05D0; &#x05D4;&#x05D8;&#x05D9;&#x05D9;&#x05E1;</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
+<script src="/static/auth.js"></script>
 <script>if(localStorage.getItem('sb-collapsed')==='1')document.body.className+=' sb-collapsed';</script>
 <div id="layout">
   <aside id="sidebar">
     <button id="sb-toggle" onclick="sbToggle()">
       <span class="sb-icon">&#9776;</span>
-      <span class="sb-logo">UCS Dashboard</span>
+      <span class="sb-logo">&#x05EA;&#x05D0; &#x05D4;&#x05D8;&#x05D9;&#x05D9;&#x05E1;</span>
     </button>
     <nav class="sb-nav">
       <div class="sb-group">
@@ -41,6 +42,21 @@
         </div>
       </div>
       <div class="sb-group">
+        <div class="sb-group-hdr" id="grp-vcenter" onclick="sbGroup('vcenter')">
+          <span class="sb-icon">&#x2601;</span>
+          <span class="sb-label">vCenter</span>
+          <span class="sb-arr">&#x25B6;</span>
+        </div>
+        <div class="sb-items closed" id="items-vcenter">
+          <a href="/vcenter/overview" class="sb-item"><span class="sb-dot"></span><span class="sb-label">&#x1F310; &#x05E1;&#x05E7;&#x05D9;&#x05E8;&#x05D4; &#x05DB;&#x05D5;&#x05DC;&#x05DC;&#x05EA;</span></a>
+          <a href="/dr" class="sb-item"><span class="sb-dot"></span><span class="sb-label">&#x21D4; DR Dashboard</span></a>
+          <a href="/vcenter/pt" class="sb-item"><span class="sb-dot"></span><span class="sb-label">PT-vCenter</span></a>
+          <a href="/vcenter/tc" class="sb-item"><span class="sb-dot"></span><span class="sb-label">TC-vCenter</span></a>
+          <a href="/vcenter/tc8" class="sb-item"><span class="sb-dot"></span><span class="sb-label">TC vCenter8</span></a>
+          <a href="/vcenter/fattal" class="sb-item"><span class="sb-dot"></span><span class="sb-label">Fattal-vCenter</span></a>
+        </div>
+      </div>
+      <div class="sb-group">
         <div class="sb-group-hdr disabled">
           <span class="sb-icon">&#x1F5A5;</span><span class="sb-label">Hosts</span><span class="sb-badge">בקרוב</span>
         </div>
@@ -59,7 +75,7 @@
   <div id="content-wrap">
   <header>
     <div class="header-inner">
-      <span class="logo">&#x2609; UCS Dashboard</span>
+      <span class="logo">&#x2609; &#x05EA;&#x05D0; &#x05D4;&#x05D8;&#x05D9;&#x05D9;&#x05E1;</span>
         <a href="/compare" class="farm-link">&#x1F4CA; Compare</a>
         <a href="/devices" class="farm-link">&#x1F5C4; Devices</a>
       </nav>
@@ -345,12 +361,13 @@
     </section>
   </main>
 
-  <footer>UCS Dashboard &copy; 2026 | FATTAL</footer>
+  <footer>&#x05EA;&#x05D0; &#x05D4;&#x05D8;&#x05D9;&#x05D9;&#x05E1; &copy; 2026 | FATTAL</footer>
   </div><!-- /content-wrap -->
 </div><!-- /layout -->
-  <script src="/static/sidebar.js"></script>
+  <script src="/static/sidebar.js?v=20261005c"></script>
 
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="/static/xlsx.full.min.js"></script>
   <script src="/static/app.js"></script>
+<script src="/static/lang.js"></script>
 </body>
 </html>

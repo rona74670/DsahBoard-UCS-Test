@@ -1425,6 +1425,65 @@ def collect_vm_disks(si, vm_name: str) -> dict:
     return {"found": True, "powered_on": powered, "disks": sorted(disks.values(), key=lambda x: x["instance"])}
 
 
+# vCenter event class -> (kind, Hebrew label). vCenter keeps events for ~30 days. Note: a restart started INSIDE the guest
+# (Start > Restart) is usually not logged by vCenter; one started from vCenter (Restart Guest OS) is.
+_VM_EVENT_KINDS = {
+    "VmPoweredOnEvent":      ("poweron",  "הופעל (Power On)"),
+    "VmPoweredOffEvent":     ("poweroff", "כובה (Power Off)"),
+    "VmSuspendedEvent":      ("suspend",  "הושעה (Suspend)"),
+    "VmGuestRebootEvent":    ("reboot",   "אתחול מערכת הפעלה (Guest Reboot)"),
+    "VmGuestShutdownEvent":  ("shutdown", "כיבוי מערכת הפעלה (Guest Shutdown)"),
+    "VmGuestStandbyEvent":   ("shutdown", "מערכת הפעלה עברה ל-Standby"),
+    "VmResettingEvent":      ("reset",    "איפוס (Reset)"),
+    "VmDasBeingResetEvent":  ("ha",       "HA איפס את השרת"),
+    "VmDasBeingResetWithScreenshotEvent": ("ha", "HA איפס את השרת"),
+    "VmRestartedOnAlternateHostEvent": ("ha", "HA הפעיל מחדש על host אחר"),
+    "DrsVmMigratedEvent":    ("vmotion",  "הועבר בין hosts (DRS vMotion)"),
+    "VmMigratedEvent":       ("vmotion",  "הועבר בין hosts (vMotion)"),
+    "VmRelocatedEvent":      ("relocate", "הועבר (Relocate)"),
+    "VmReconfiguredEvent":   ("reconfig", "הוגדר מחדש (Reconfigure)"),
+}
+
+
+_KIND_EN = {"poweron": "powered on", "poweroff": "powered off", "suspend": "suspended", "reboot": "guest reboot", "shutdown": "guest shutdown",
+            "reset": "reset", "ha": "restarted by HA", "vmotion": "vMotion", "relocate": "relocated", "reconfig": "reconfigured", "snapshot": "snapshot"}
+
+
+def collect_vm_events(si, vm_name: str, days: int = 7) -> list:
+    """Events vCenter holds for one VM (power, reboot, reset, HA, vMotion, snapshots, reconfig), oldest first:
+    [{time (local), kind, label, user, msg, type}]. Empty when the account is not allowed to read VM events."""
+    from datetime import datetime, timedelta, timezone as _tz
+    vm = _find_vm(si, vm_name)
+    if vm is None:
+        return []
+    em = si.RetrieveContent().eventManager
+    end = datetime.now(_tz.utc)
+    start = end - timedelta(days=max(1, min(days, 30)))
+    spec = vim.event.EventFilterSpec(
+        entity=vim.event.EventFilterSpec.ByEntity(entity=vm, recursion="self"),
+        time=vim.event.EventFilterSpec.ByTime(beginTime=start, endTime=end))
+    out = []
+    for e in (em.QueryEvents(spec) or []):
+        cls = type(e).__name__.split(".")[-1]
+        msg = (getattr(e, "fullFormattedMessage", "") or "").strip()
+        kind, label = _VM_EVENT_KINDS.get(cls, (None, None))
+        if kind is None and "snapshot" in msg.lower():
+            kind, label = "snapshot", "Snapshot"
+        if kind is None:
+            continue
+        ct = getattr(e, "createdTime", None)
+        if ct is None:
+            continue
+        try:
+            local = ct.astimezone().replace(tzinfo=None) if ct.tzinfo else ct
+        except Exception:
+            continue
+        out.append({"time": local.strftime("%Y-%m-%d %H:%M"), "kind": kind, "label": label, "label_en": _KIND_EN.get(kind, kind),
+                    "user": getattr(e, "userName", "") or "", "msg": msg[:200], "type": cls})
+    out.sort(key=lambda x: x["time"])
+    return out
+
+
 def open_session(host: str, username: str, password: str):
     """Open a long-lived vCenter session (caller is responsible for Disconnect)."""
     return VCenterClient(host=host, username=username, password=password)._connect()

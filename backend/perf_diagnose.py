@@ -126,7 +126,7 @@ def _near_backup(ts, backups):
     return None
 
 
-def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: dict, backups: dict, vm_cfg=None, series=None) -> dict:
+def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: dict, backups: dict, vm_cfg=None, series=None, events=None) -> dict:
     findings = []
     facts = {"vm": name, "environment": env, "range": range_key}
 
@@ -169,6 +169,10 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
     # for this VM's CPU.
     host_cpu_busy = bool(host) and (host.get("level") == "down" or (host.get("cpu_pct") or 0) >= 75
                                     or (host.get("ready_avg") or 0) >= 3)
+    # A busy host CPU is not contention: contention means VMs wait for a core, which shows as Ready. A host can run at 80%
+    # with ~0% Ready (nobody waits). So the host is blamed for this VM's CPU only when Ready says so.
+    host_contended = bool(host) and (host.get("level") == "down" or (host.get("ready_avg") or 0) >= 3
+                                     or ((host.get("cpu_pct") or 0) >= 90 and (s.get("ready_max_pct") or 0) >= 5))
     host_busy = bool(host) and (host.get("level") == "down" or (host.get("cpu_pct") or 0) >= 75
                                 or (host.get("ready_avg") or 0) >= 3 or (host.get("mem_pct") or 0) >= 85)
     facts.update({
@@ -208,7 +212,7 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
             act = _t("Recurring Co-Stop means too many vCPUs: reduce vCPUs (start with 1-2) instead of adding.",
                      "Co-Stop חוזר מעיד על יותר מדי vCPUs: להפחית vCPUs (להתחיל ב-1-2) ולא להוסיף.")
             cpu_answer = _t("No - it already has too many vCPUs (Co-Stop).", "לא - יש לו כבר יותר מדי vCPUs (Co-Stop).")
-        elif rdy_lv >= 2 or host_cpu_busy:
+        elif rdy_lv >= 2 or host_contended:
             act = _t("The VM waits for physical CPU (Ready / busy host): move it to a quieter host (vMotion) or relieve the host. Do not add vCPUs.",
                      "השרת מחכה למעבד פיזי (Ready / host עמוס): להעביר ל-host שקט יותר (vMotion) או לפנות את ה-host. לא להוסיף vCPUs.")
             cpu_answer = _t("No - the cause is host contention, not VM size.", "לא - הסיבה היא עומס על ה-host ולא גודל השרת.")
@@ -229,8 +233,8 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                          "השרת כמעט כל הזמן על כ-100%% CPU (ממוצע %s%%, מעל 85%% במשך %s%% מהזמן) ללא תחרות. זה לא עומס עבודה רגיל: לחפש תהליך תקוע או בלולאה, "
                          "או שירות שנתקע ב-retry (Task Manager/top, לוגים של האפליקציה). שרת ששוחזר/שוכפל עלול להריץ גם משימה כפולה. "
                          "להוסיף vCPUs רק אם הוכח שהעומס לגיטימי." % (round(avg_cpu, 1), share_hi))
-                cpu_answer = _t("Not yet - first find out why it is pegged at 100% (likely a stuck process); more vCPUs may just feed it.",
-                                "עדיין לא - קודם להבין למה הוא תקוע על 100% (כנראה תהליך תקוע); תוספת vCPUs רק תזין אותו.")
+                cpu_answer = _t("No - first find out why it is pegged at 100% (likely a stuck process); more vCPUs may just feed it.",
+                                "לא - קודם להבין למה הוא תקוע על 100% (כנראה תהליך תקוע); תוספת vCPUs רק תזין אותו.")
             elif avg_cpu >= 60 or (avg_cpu >= 50 and share_hi >= 10):
                 sev = "crit" if (avg_cpu >= 70 or share_hi >= 20) else "warn"
                 avg = s.get("avg_cpu_pct") or 0
@@ -321,8 +325,8 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
         else:
             hrs_en = "at least 48 hours" if hrs >= 47 else "the last %s hours" % hrs
             hrs_he = "לפחות 48 שעות" if hrs >= 47 else "%s שעות" % hrs
-            cpu_answer = _t("Not yet - the VM has been saturated for %s; first find out what is running now (it may be a stuck process)." % hrs_en,
-                            "עדיין לא - השרת רווי %s; קודם לברר מה רץ עכשיו (אולי תהליך תקוע)." % hrs_he)
+            cpu_answer = _t("No - the VM has been saturated for %s; first find out what is running now (it may be a stuck process)." % hrs_en,
+                            "לא - השרת רווי %s; קודם לברר מה רץ עכשיו (אולי תהליך תקוע)." % hrs_he)
 
     # ---- Ready / Co-Stop / Limit -----------------------------------------------------------------
     spike_rdy, spike_cs = (s.get("ready_max_pct") or 0), (s.get("cs_max_pct") or 0)
@@ -454,12 +458,19 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
         swap_he = (" ב-host יש עוד %s שרתים עם swap (לעיתים בגלל Memory Limit שהוגדר להם)." % swapv) if swapv and not swap else ""
         base_en = "%s. CPU %s%%, RAM %s%%, %s VMs, vCPU:core %s:1." % ("; ".join(reasons_en), host.get("cpu_pct"), host.get("mem_pct"), host.get("vms"), host.get("vcpu_ratio"))
         base_he = "%s. CPU %s%%, RAM %s%%, %s שרתים, יחס vCPU:ליבה %s:1." % ("; ".join(reasons_he), host.get("cpu_pct"), host.get("mem_pct"), host.get("vms"), host.get("vcpu_ratio"))
-        if host_busy:
+        if host_busy and host_contended:
             findings.append(_f(sev, "ESXi",
                                _t("The ESXi host %s is under load" % host.get("name"), "ה-ESXi %s תחת עומס" % host.get("name")),
                                _t(base_en + swap_en, base_he + swap_he),
                                _t("Rebalance: vMotion busy VMs to quieter hosts (check DRS). Top consumers on this host: %s." % top_en,
                                   "לאזן: vMotion של שרתים עמוסים ל-hosts שקטים (לבדוק DRS). הצרכנים הגדולים על ה-host: %s." % top_en)))
+        elif host_busy:
+            findings.append(_f("warn" if crit else "info", "ESXi",
+                               _t("ESXi %s is busy but not contended" % host.get("name"), "ה-ESXi %s עסוק אבל בלי תחרות" % host.get("name")),
+                               _t(base_en + swap_en + " CPU Ready on the host is low, so the VMs are not waiting for CPU: a busy host (high utilisation) is not the same as contention.",
+                                  base_he + swap_he + " ה-CPU Ready ב-host נמוך, כלומר השרתים לא ממתינים למעבד: host עסוק (ניצול גבוה) הוא לא תחרות."),
+                               _t("No action for this VM. Keep an eye on the headroom: if the host stays this busy, spread the heavy VMs (top consumers: %s)." % top_en,
+                                  "אין צורך בפעולה לשרת הזה. לשמור על מרווח: אם ה-host נשאר עסוק כך, לפזר את השרתים הכבדים (הצרכנים הגדולים: %s)." % top_en)))
         else:
             findings.append(_f("info", "ESXi",
                                _t("ESXi %s: no contention affecting this VM" % host.get("name"), "ESXi %s: אין תחרות שמשפיעה על השרת הזה" % host.get("name")),
@@ -509,6 +520,37 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                                _t("If this is SQL Server Standard/Express, regroup the vCPUs into fewer sockets (for example 2 sockets x %s cores). Check the edition first." % (vcpu // 2),
                                   "אם זה SQL Server Standard/Express - לקבץ את ה-vCPUs לפחות סוקטים (למשל 2 סוקטים × %s ליבות). לבדוק קודם איזו מהדורה." % (vcpu // 2))))
 
+    # ---- VM events (reboot / power / HA / vMotion) right before a peak ---------------------------------
+    if events:
+        notable = [ev for ev in events if ev.get("kind") in ("poweron", "reboot", "reset", "ha", "vmotion", "poweroff")]
+        facts["vm_events"] = [{"time": ev["time"], "kind": ev["kind"], "user": ev.get("user", "")} for ev in notable[-8:]]
+        hit = None
+        # a spike that stands out from the VM's usual level (a reboot rarely reaches 85%, but 36% on a 5% VM is a spike)
+        for label, ts, val, usual, floor, delta in (("CPU peak", s.get("max_cpu_ts"), s.get("max_cpu_pct"), s.get("avg_cpu_pct"), 30, 20),
+                                                    ("RAM peak", s.get("max_mem_ts"), s.get("max_mem_pct"), s.get("avg_mem_pct"), 40, 20),
+                                                    ("Ready peak", s.get("ready_max_ts"), s.get("ready_max_pct"), 0, 3, 0),
+                                                    ("Co-Stop peak", s.get("cs_max_ts"), s.get("cs_max_pct"), 0, 2, 0)):
+            t0 = _parse(ts)
+            if not t0 or (val or 0) < floor or (val or 0) - (usual or 0) < delta:
+                continue
+            for ev in notable:
+                te = _parse(ev["time"])
+                if te and te - timedelta(minutes=10) <= t0 <= te + timedelta(minutes=60):
+                    hit = (label, ts, ev)
+                    break
+            if hit:
+                break
+        if hit:
+            label, ts, ev = hit
+            findings.append(_f("info", "Event",
+                               _t("A peak follows a server event (%s)" % ev["kind"], "פיק אחרי אירוע בשרת (%s)" % ev["kind"]),
+                               _t("The %s (%s) is within an hour of: %s at %s%s. A reboot, power-on or move makes the VM load disks, caches and services, "
+                                  "which looks like a CPU/RAM/Ready spike." % (label, ts, ev.get("label_en") or ev["kind"], ev["time"], (" (by %s)" % ev["user"]) if ev.get("user") else ""),
+                                  "ה-%s (%s) קרוב (עד שעה) לאירוע: %s ב-%s%s. אתחול, הפעלה או העברה גורמים לשרת לטעון דיסקים, cache ושירותים, וזה נראה כקפיצה ב-CPU/RAM/Ready." % (
+                                      label, ts, ev.get("label") or ev["kind"], ev["time"], (" (על ידי %s)" % ev["user"]) if ev.get("user") else "")),
+                               _t("Usually expected and no action is needed; if it repeats without a planned event, look for unplanned restarts (patching, crashes, HA).",
+                                  "בדרך כלל צפוי ואין צורך בפעולה; אם זה חוזר בלי אירוע מתוכנן, לחפש אתחולים לא מתוכננים (עדכונים, קריסות, HA).")))
+
     # ---- Disks -----------------------------------------------------------------------------------
     if disks and disks.get("disks"):
         bad = [d for d in disks["disks"] if d.get("level") in ("warn", "crit")]
@@ -543,10 +585,18 @@ def diagnose(env: str, name: str, range_key: str, s: dict, host: dict, disks: di
                 hits.append((label, ts, p))
         if hits:
             label, ts, p = hits[0]
+            t0, st, en = _parse(ts), _parse(p.get("start")), _parse(p.get("end"))
+            inside = bool(t0 and st and en and st <= t0 <= en)        # inside the backup window, not "after" it
+            if inside:
+                when_en = "falls inside the window of a %s backup (%s to %s, job '%s')" % (p.get("server"), p.get("start", "")[11:16], p.get("end", "")[11:16], p.get("job"))
+                when_he = "נופל בתוך חלון של גיבוי %s (%s עד %s, job '%s')" % (p.get("server"), p.get("start", "")[11:16], p.get("end", "")[11:16], p.get("job"))
+            else:
+                when_en = "falls shortly after the start of a %s backup (restore point %s, job '%s')" % (p.get("server"), p.get("time"), p.get("job"))
+                when_he = "נופל זמן קצר אחרי תחילת גיבוי %s (נקודת שחזור %s, job '%s')" % (p.get("server"), p.get("time"), p.get("job"))
             findings.append(_f("info", "Backup",
                                _t("A peak coincides with a backup", "פיק מתיישר עם גיבוי"),
-                               _t("The %s (%s) falls shortly after a %s backup (%s, job '%s')." % (label, ts, p.get("server"), p.get("time"), p.get("job")),
-                                  "ה-%s (%s) נופל זמן קצר אחרי גיבוי %s (%s, job '%s')." % (label, ts, p.get("server"), p.get("time"), p.get("job"))),
+                               _t("The %s (%s) %s. A backup snapshot (create / remove) briefly freezes the VM, which shows up as a short Ready / Co-Stop spike." % (label, ts, when_en),
+                                  "ה-%s (%s) %s. snapshot של גיבוי (יצירה / מחיקה) מקפיא את השרת לרגע, וזה נראה כקפיצת Ready / Co-Stop קצרה." % (label, ts, when_he)),
                                _t("Consider moving the backup window, throttling it in Veeam, or spreading heavy VMs across different times.",
                                   "לשקול להזיז את חלון הגיבוי, להגביל אותו ב-Veeam, או לפזר שרתים כבדים לזמנים שונים.")))
         nb = len([p for p in backups.get("points") or [] if p.get("kind") == "backup"])
@@ -571,8 +621,8 @@ def _result(findings: list, facts: dict, cpu_answer) -> dict:
     elif top == "info" and findings and findings[0]["area"] == "Data":
         verdict, level = findings[0]["title"], "info"
     else:
-        verdict = _t("No resource problem found on the hypervisor side. If users still report slowness, look inside the guest (application, OS, network).",
-                     "לא נמצאה בעיית משאבים מצד ה-hypervisor. אם עדיין יש תלונות על איטיות, לבדוק בתוך השרת (אפליקציה, מערכת הפעלה, רשת).")
+        verdict = _t("No resource problem found on the hypervisor side. If users report slowness, look inside the guest (application, OS, network).",
+                     "לא נמצאה בעיית משאבים מצד ה-hypervisor. אם יש תלונות על איטיות, לבדוק בתוך השרת (אפליקציה, מערכת הפעלה, רשת).")
         level = "ok"
     out = {"verdict": verdict, "level": level, "findings": findings, "facts": facts}
     if cpu_answer:

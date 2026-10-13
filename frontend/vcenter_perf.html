@@ -40,8 +40,16 @@
     .cust-row { cursor:pointer; }
     .cust-row.expanded > td:first-child::before { content:'▼ '; font-size:0.6rem; color:var(--accent); }
     .cust-row:not(.expanded) > td:first-child::before { content:'▶ '; font-size:0.6rem; color:var(--muted); }
-    .vm-sub-row td { background:#0a0f16 !important; font-size:0.78rem; padding:0.35rem 0.7rem; cursor:pointer; }
-    .chart-row td { background:#070b11 !important; padding:0.8rem 1.2rem; }
+    :root { --sub-bg:#0a0f16; --chart-bg:#070b11; --card-bg:#0d1117; --chart-halo:#0d1117; }
+    body.light-mode { --sub-bg:#f0f3f6; --chart-bg:#ffffff; --card-bg:#ffffff; --chart-halo:#ffffff; }
+    .diag-act { color:#58a6ff; }
+    body.light-mode .diag-act { color:#0969da; }
+    body.light-mode .pct.hot, body.light-mode .rdy-crit, body.light-mode .kpi-card.red .kpi-value { color:#cf222e; }
+    body.light-mode .pct.warm, body.light-mode .rdy-warn, body.light-mode .kpi-card.amber .kpi-value { color:#9a6700; }
+    body.light-mode .pct.ok, body.light-mode .rdy-ok, body.light-mode .kpi-card.green .kpi-value { color:#1a7f37; }
+    body.light-mode .kpi-card.blue .kpi-value { color:#0969da; }
+    .vm-sub-row td { background:var(--sub-bg) !important; font-size:0.78rem; padding:0.35rem 0.7rem; cursor:pointer; }
+    .chart-row td { background:var(--chart-bg) !important; padding:0.8rem 1.2rem; }
     .env-badge { display:inline-block; padding:0.05rem 0.45rem; border-radius:4px; font-size:0.68rem; font-weight:700; }
     .env-badge.TC     { background:#0d1a2d; color:#79c0ff; border:1px solid #1f6feb; }
     .env-badge.TC8    { background:#001a2d; color:#79c0ff; border:1px solid #79c0ff; }
@@ -264,6 +272,18 @@
         <dt>איפה רואים את זה בדשבורד</dt><dd>
           בכרטיס ה-ESXi של שרת פתוח (בסימון "הצג ESXi") מופיעה שורה <b>🧩 טופולוגיית CPU</b>: הסידור הנוכחי, הסידור המומלץ, מצב CPU Hot Add, ונקודת צבע (🟢 תקין · ℹ️ הערה · 🟠 מומלץ לשנות). וב"נתח שרת" מופיעים ממצאי Topology כשיש בעיה.</dd>
         <dt>שים לב</dt><dd>ההמלצה מניחה שלכל host יש 2 סוקטים פיזיים. היא מבוססת על כללי אצבע של VMware, ובכל שינוי בהגדרה השרת צריך להיות כבוי. בשרת שרץ היטב אין חובה לשנות.</dd>
+      </dl></details>
+
+      <details><summary>📄 דוח Word לשרת</summary><dl>
+        <dt>מה זה</dt><dd>הכפתור <b>"📄 דוח Word"</b> בראש כל שרת פתוח מפיק קובץ Word אחד עם כל מה שמוצג במסך: טבלת מדדים (CPU, RAM, Ready, Co-Stop, Limit, לחץ זיכרון ומדי העומס), האבחון עם ההמלצות, כרטיס ה-ESXi, טופולוגיית ה-CPU, הדיסקים, <b>הגרף</b> (כולל תוויות הפיקים), אירועי השרת מ-vCenter והגיבויים.</dd>
+        <dt>שפה</dt><dd>הדוח נכתב בשפה שנבחרה בכפתור עברית / English של האבחון. בעברית הוא מסודר מימין לשמאל.</dd>
+        <dt>שים לב</dt><dd>הדוח מחשב את הנתונים מחדש ברגע ההפקה (נתוני host ודיסקים חיים), ולכן ייתכנו הבדלים קטנים מהמסך. ההפקה לוקחת כמה שניות, ובפעם הראשונה אחרי הפעלה עד כחצי דקה.</dd>
+      </dl></details>
+
+      <details><summary>🗓 אירועי שרת בגרף (אתחול, הפעלה, vMotion)</summary><dl>
+        <dt>מה רואים</dt><dd>מתחת לגרף של כל שרת מופיעה רשימת אירועים מ-vCenter (עד 30 ימים אחורה), ועל הגרף עצמו סימון בעיגול צבעוני וקו מקווקו בזמן האירוע: <b>R</b> אתחול או איפוס, <b>P</b> הפעלה או כיבוי, <b>V</b> העברה בין hosts (vMotion), <b>H</b> הפעלה מחדש על ידי HA. ריחוף על העיגול מציג זמן, סוג האירוע ומי ביצע.</dd>
+        <dt>למה זה חשוב</dt><dd>אתחול, הפעלה או העברה של שרת גורמים לקפיצה קצרה ב-CPU, ב-RAM ובמקרים גם ב-Ready (השרת טוען דיסקים, cache ושירותים). עם הסימון אפשר לראות מיד אם פיק הוא תוצאה של אירוע מתוכנן ולא בעיה. גם "נתח שרת" בודק אם פיק נמצא עד שעה אחרי אירוע כזה.</dd>
+        <dt>מגבלה חשובה</dt><dd>vCenter רושם אתחול שבוצע <b>מ-vCenter</b> (Restart Guest OS / Reset / Power). אתחול שבוצע <b>מתוך מערכת ההפעלה</b> (Start ← Restart, או עדכון שמאתחל לבד) בדרך כלל לא נרשם שם, ולכן לא יופיע. כדי לזהות גם אותם צריך לעקוב אחרי uptime של השרת (אפשר להוסיף).</dd>
       </dl></details>
 
       <details><summary>🩺 "נתח שרת" — אבחון אוטומטי</summary><dl>
@@ -490,17 +510,19 @@ function diagTxt(o) { return o ? (o[_diagLang] || o.en || '') : ''; }
 function diagInner(k) {
   var r = _diag[k];
   if (_diagBusy[k] === 'run') return '<span class="muted">🩺 מנתח את השרת… (עד כחצי דקה בפעם הראשונה)</span>';
-  if (!r) return '<button class="export-btn" onclick="runDiag(this.closest(' + "'.diag-box'" + ').dataset.k)" title="מנתח את השרת לפי כל המדדים ומציע מה לבדוק ומה לעשות">🩺 נתח שרת</button>';
+  if (!r) return '<button class="export-btn" onclick="runDiag(this.closest(' + "'.diag-box'" + ').dataset.k)" title="מנתח את השרת לפי כל המדדים ומציע מה לבדוק ומה לעשות">🩺 נתח שרת</button> ' +
+    '<button class="export-btn" onclick="exportWord(this.closest(' + "'.diag-box'" + ').dataset.k, this)" title="מפיק קובץ Word עם כל נתוני השרת, האבחון והגרף">📄 דוח Word</button>';
   if (r.error) return '<span class="muted">🩺 האבחון נכשל (' + e(r.error) + ') </span><button class="export-btn" onclick="runDiag(this.closest(' + "'.diag-box'" + ').dataset.k)">נסה שוב</button>';
   var he = _diagLang === 'he';
   var html = '<div style="padding:.5rem .8rem;border:1px solid var(--border,#30363d);border-radius:8px;font-size:.82rem;line-height:1.65">' +
     '<div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start"><b>' + SEV_ICON[r.level] + ' 🩺 ' + (he ? 'אבחון' : 'Diagnosis') + ': ' + e(diagTxt(r.verdict)) + '</b>' +
-    '<span style="white-space:nowrap"><button class="export-btn" onclick="setDiagLang()">' + (he ? 'English' : 'עברית') + '</button> ' +
+    '<span style="white-space:nowrap"><button class="export-btn" onclick="exportWord(this.closest(' + "'.diag-box'" + ').dataset.k, this)" title="מפיק קובץ Word עם כל נתוני השרת, האבחון והגרף">📄 דוח Word</button> ' +
+    '<button class="export-btn" onclick="setDiagLang()">' + (he ? 'English' : 'עברית') + '</button> ' +
     '<button class="export-btn" onclick="runDiag(this.closest(' + "'.diag-box'" + ').dataset.k, true)" title="הרץ מחדש">⟳</button></span></div>';
   if (r.cpu_answer) html += '<div style="margin-top:.3rem"><b>' + (he ? 'האם צריך עוד מעבדים?' : 'Does it need more CPUs?') + '</b> ' + e(diagTxt(r.cpu_answer)) + '</div>';
   (r.findings || []).forEach(function (f) {
     html += '<div style="margin-top:.45rem;padding-top:.35rem;border-top:1px solid var(--border,#30363d)">' + SEV_ICON[f.sev] + ' <b>' + e(f.area) + ' — ' + e(diagTxt(f.title)) + '</b><br>' +
-      e(diagTxt(f.detail)) + (f.action && diagTxt(f.action) ? '<br><span style="color:#58a6ff"><b>' + (he ? 'מה לעשות' : 'What to do') + ':</b> ' + e(diagTxt(f.action)) + '</span>' : '') + '</div>';
+      e(diagTxt(f.detail)) + (f.action && diagTxt(f.action) ? '<br><span class="diag-act"><b>' + (he ? 'מה לעשות' : 'What to do') + ':</b> ' + e(diagTxt(f.action)) + '</span>' : '') + '</div>';
   });
   html += fbHtml(k, r);
   html += '<div style="margin-top:.55rem">';
@@ -556,6 +578,57 @@ async function sendFb(k, rating, area, comment) {
     _diagFb[k] = { saved: true };
   } catch (x) { alert('לא ניתן לשמור את הדירוג: ' + (x.message || x)); }
   paintDiag(k);
+}
+// ── Word report of the opened server (built on the server; the chart is rasterised here and sent along) ──
+function svgToPng(svg) {
+  return new Promise(function (resolve) {
+    try {
+      var vb = svg.viewBox.baseVal, W = vb.width, H = vb.height, c = svg.cloneNode(true);
+      c.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      c.setAttribute('width', W); c.setAttribute('height', H); c.removeAttribute('style');
+      var xml = new XMLSerializer().serializeToString(c)
+        .split('var(--chart-halo,#0d1117)').join('#ffffff').split('#30363d').join('#d0d7de').split('#8b949e').join('#57606a');
+      xml = xml.replace('>', '><rect width="100%" height="100%" fill="#ffffff"/>');      // white page background
+      var img = new Image();
+      img.onload = function () {
+        var cv = document.createElement('canvas');
+        cv.width = W * 2; cv.height = H * 2;
+        var ctx = cv.getContext('2d');
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, cv.width, cv.height);
+        ctx.drawImage(img, 0, 0, cv.width, cv.height);
+        resolve(cv.toDataURL('image/png').split(',')[1]);
+      };
+      img.onerror = function () { resolve(''); };
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+    } catch (x) { resolve(''); }
+  });
+}
+var _wordBusy = {};
+async function exportWord(k, btn) {
+  if (_wordBusy[k]) return;
+  _wordBusy[k] = true;
+  var old = btn ? btn.textContent : '';
+  if (btn) btn.textContent = '⏳ מפיק דוח…';
+  try {
+    var i = k.indexOf('|'), env = k.slice(0, i), name = k.slice(i + 1), svg = null;
+    document.querySelectorAll('.diag-box').forEach(function (b) {
+      if (b.dataset.k === k) { var td = b.closest('td'); if (td) svg = td.querySelector('svg'); }
+    });
+    var png = svg ? await svgToPng(svg) : '';
+    var resp = await fetch('/api/vcenter/perf/report', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': window.getCsrfToken ? window.getCsrfToken() : '' },
+      body: JSON.stringify({ env: env, name: name, range: _range, lang: _diagLang, chart_png: png })
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    var blob = await resp.blob(), m = /filename="([^"]+)"/.exec(resp.headers.get('Content-Disposition') || '');
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = m ? m[1] : 'performance_report.docx';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+  } catch (x) { alert('הפקת הדוח נכשלה: ' + (x.message || x)); }
+  delete _wordBusy[k];
+  if (btn) btn.textContent = old;
 }
 function paintDiag(k) {
   document.querySelectorAll('.diag-box').forEach(function (b) { if (b.dataset.k === k) b.innerHTML = diagInner(k); });
@@ -908,6 +981,79 @@ function render() {
 function toggleCustomer(key) { if (_expanded.has(key)) _expanded.delete(key); else _expanded.add(key); render(); }
 function toggleChart(k) { if (_chartOpen.has(k)) _chartOpen.delete(k); else _chartOpen.add(k); render(); }
 
+// Labels the peaks that stand out on the chart with their date, time and value (up to 4 per series, no overlaps).
+// The time is the exact minute of the peak inside the bucket (max_cpu_ts / max_mem_ts).
+function peakLabels(d, keyVal, keyTs, color, X, Y, placed, W, H, pl, pr, pt) {
+  var n = d.length;
+  if (n < 5) return '';
+  var vals = d.map(function (p) { return p[keyVal] || 0; });
+  var med = vals.slice().sort(function (a, b) { return a - b; })[Math.floor(n / 2)];
+  var cand = [];
+  for (var i = 0; i < n; i++) {
+    var v = vals[i];
+    if (v < 25 || v - med < 20) continue;                                       // must stand out from the usual level
+    if ((i > 0 && vals[i - 1] > v) || (i < n - 1 && vals[i + 1] > v)) continue; // local maximum
+    cand.push(i);
+  }
+  cand.sort(function (a, b) { return vals[b] - vals[a]; });
+  var out = '', taken = [];
+  cand.forEach(function (i) {
+    if (taken.length >= 4) return;
+    if (taken.some(function (j) { return Math.abs(j - i) < Math.max(6, n / 14); })) return;
+    var txt = fmtWhen(d[i][keyTs] || d[i].bucket) + ' · ' + Math.round(vals[i]) + '%';
+    var x = X(i), y = Y(vals[i]), w = txt.length * 5.2 + 6, anchor = 'middle', x1 = x - w / 2;
+    if (x - w / 2 < pl) { anchor = 'start'; x1 = x - 2; } else if (x + w / 2 > W - pr) { anchor = 'end'; x1 = x - w + 2; }
+    var pick = null, tries = [y - 6, y + 14, y - 18, y + 26];
+    for (var q = 0; q < tries.length && !pick; q++) {
+      var yy = tries[q];
+      if (yy < pt + 8 || yy > H - 22) continue;
+      var box = [x1, x1 + w, yy - 9, yy + 2];
+      if (!placed.some(function (b) { return !(box[1] < b[0] || box[0] > b[1] || box[3] < b[2] || box[2] > b[3]); })) pick = { yy: yy, box: box };
+    }
+    if (!pick) return;
+    placed.push(pick.box);
+    taken.push(i);
+    out += '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="2.6" fill="' + color + '" style="stroke:var(--chart-halo,#0d1117)" stroke-width=".8"/>' +
+      '<text x="' + (anchor === 'middle' ? x : (anchor === 'start' ? x1 : x1 + w - 2)).toFixed(1) + '" y="' + pick.yy.toFixed(1) + '" text-anchor="' + anchor +
+      '" font-size="9" font-weight="700" fill="' + color + '" style="stroke:var(--chart-halo,#0d1117)" stroke-width="2.4" paint-order="stroke">' + e(txt) + '</text>';
+  });
+  return out;
+}
+
+// ── Server events (reboot / power / HA / vMotion) from vCenter's event history, marked on the chart ──
+var EV_MARK = {
+  reboot:   { c: '#f2cc60', g: 'R' }, reset: { c: '#f2cc60', g: 'R' }, ha: { c: '#f85149', g: 'H' },
+  poweron:  { c: '#3fb950', g: 'P' }, poweroff: { c: '#8b949e', g: 'P' }, shutdown: { c: '#8b949e', g: 'S' },
+  vmotion:  { c: '#a371f7', g: 'V' }
+};
+async function fillEvents(cell, env, name, c) {
+  try {
+    var r = await fetch('/api/vcenter/perf/vm-events?env=' + encodeURIComponent(env) + '&name=' + encodeURIComponent(name) + '&days=' + c.days, { credentials: 'include' });
+    if (!r.ok) return;
+    var j = await r.json(), evs = (j.events || []).filter(function (x) { return EV_MARK[x.kind]; });
+    var svg = cell.querySelector('svg');
+    if (!svg || cell.querySelector('.ev-list')) return;
+    var step = c.table === 'vm_perf_hourly' ? 3600000 : 86400000;
+    var t0 = new Date(c.d[0].bucket.replace(' ', 'T')).getTime(), n = c.d.length, g = '', shown = 0;
+    evs.forEach(function (x) {
+      var idx = (new Date(x.time.replace(' ', 'T')).getTime() - t0) / step;
+      if (!(idx >= 0 && idx <= n - 1)) return;
+      var xx = c.X(idx), m = EV_MARK[x.kind];
+      shown++;
+      g += '<g><line x1="' + xx.toFixed(1) + '" x2="' + xx.toFixed(1) + '" y1="' + (c.pt + 12) + '" y2="' + (c.H - c.pb) + '" stroke="' + m.c + '" stroke-width="1" stroke-dasharray="3 3" opacity=".7"/>' +
+        '<circle cx="' + xx.toFixed(1) + '" cy="' + (c.pt + 8) + '" r="6" fill="' + m.c + '" stroke="#0d1117" stroke-width="1"/>' +
+        '<text x="' + xx.toFixed(1) + '" y="' + (c.pt + 11.5) + '" text-anchor="middle" font-size="9" font-weight="700" fill="#0d1117">' + m.g + '</text>' +
+        '<title>' + e(fmtWhen(x.time) + ' · ' + x.label + (x.user ? ' · ' + x.user : '')) + '</title></g>';
+    });
+    if (g) svg.insertAdjacentHTML('beforeend', g);
+    var recent = evs.slice(-6).reverse();
+    var li = recent.length ? recent.map(function (x) { return fmtWhen(x.time) + ' · ' + e(x.label) + (x.user ? ' · ' + e(x.user) : ''); }).join('<br>') : '';
+    cell.insertAdjacentHTML('beforeend', '<div class="ev-list muted" style="font-size:.75rem;margin-top:.3rem">🗓 אירועי שרת מ-vCenter (' + (j.events || []).length + ' ב-' + c.days + ' ימים)' +
+      (shown ? ' · מסומנים בגרף: R אתחול/איפוס, P הפעלה/כיבוי, V vMotion, H HA' : '') +
+      (li ? '<br>' + li : '<br>לא נמצאו אירועי הפעלה / אתחול / vMotion בטווח (אתחול שבוצע מתוך מערכת ההפעלה בדרך כלל לא נרשם ב-vCenter).') + '</div>');
+  } catch (x) {}
+}
+
 async function drawChart(k) {
   var id = 'chart-' + btoa(unescape(encodeURIComponent(k))).replace(/=/g, '');
   var row = document.getElementById(id);
@@ -962,6 +1108,9 @@ async function drawChart(k) {
       if (x2 !== null && x2 > x) bkSvg += '<rect x="' + x + '" y="' + pt + '" width="' + (x2 - x) + '" height="' + (H - pt - pb) + '" fill="#f0883e" opacity=".15"><title>' + tip + '</title></rect>';
       bkSvg += '<line x1="' + x + '" x2="' + x + '" y1="' + pt + '" y2="' + (H - pb) + '" stroke="' + (isSnap ? '#3fb9a8' : '#f0883e') + '" stroke-width="' + (isSnap ? 2 : 3) + '" opacity="' + (isSnap ? '.8' : '.35') + '"><title>' + (isSnap ? 'רפליקציה' : 'גיבוי') + ' ' + e(b.server) + ' · ' + tip + ' · ' + e(b.job || '') + '</title></line>';
     });
+    var pkPlaced = [];
+    var pk = peakLabels(d, 'max_cpu_pct', 'max_cpu_ts', '#58a6ff', X, Y, pkPlaced, W, H, pl, pr, pt) +
+             peakLabels(d, 'max_mem_pct', 'max_mem_ts', '#d2a8ff', X, Y, pkPlaced, W, H, pl, pr, pt);
     var bkMsg = '';
     if (bkOn() || showSnap) {
       var errs = Object.keys(bkRes.errors || {});
@@ -973,8 +1122,9 @@ async function drawChart(k) {
     }
     cell.innerHTML = diagBox(k) + esxiCard({ environment: env, vm_name: name }) + diskBox() + '<div class="legend"><span><i style="background:#58a6ff"></i>פיק CPU %</span><span><i style="background:#d2a8ff"></i>פיק RAM %</span>' + (bkOn() ? '<span><i style="background:#f0883e"></i>גיבוי (' + bkN + ')</span>' : '') + (showSnap ? '<span><i style="background:#3fb9a8"></i>רפליקציה/סנאפשוט (' + snN + ')</span>' : '') + '<span>' +
       (j.table === 'vm_perf_hourly' ? 'מקסימום לכל שעה' : 'מקסימום לכל יום') + ' · ' + e(name) + '</span>' + bkMsg + '</div>' +
-      '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-width:1100px;height:auto;direction:ltr">' + grid + bkSvg + thr + line('max_cpu_pct', '#58a6ff') + line('max_mem_pct', '#d2a8ff') + tl + '</svg>';
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-width:1100px;height:auto;direction:ltr">' + grid + bkSvg + thr + line('max_cpu_pct', '#58a6ff') + line('max_mem_pct', '#d2a8ff') + tl + pk + '</svg>';
     fillDisks(cell, env, name);
+    fillEvents(cell, env, name, { d: d, X: X, pt: pt, H: H, pb: pb, table: j.table, days: Math.max(1, Math.min(30, bdays)) });
   } catch (x) { cell.innerHTML = '<span class="muted">שגיאה בטעינת הגרף.</span>'; }
 }
 

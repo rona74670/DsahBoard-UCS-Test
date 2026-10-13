@@ -6,5 +6,5 @@ if ($procs) {
     $procs | Stop-Process -Force
     Write-Host "Server stopped." -ForegroundColor Green
 } else {
-    Write-Host "Server not running on port 8000." -ForegroundColor Yellow
+    Write-Host "Server not running on port 9000." -ForegroundColor Yellow
 }
